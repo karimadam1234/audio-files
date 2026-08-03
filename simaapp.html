@@ -66,6 +66,9 @@
   .inbox-chip{font-size:13px;padding:6px 14px;border-radius:16px;background:#F0F2F5;color:var(--wa-ink-2);white-space:nowrap;cursor:pointer;font-weight:600}
   .inbox-chip.active{background:#D1F4E8;color:var(--wa-green-dark)}
   .sort-chip{background:var(--wa-green-dark);color:#fff}
+  .search-row{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-line);flex-shrink:0}
+  .search-row input{flex:1;padding:10px 14px;border:1.5px solid var(--wa-line);border-radius:20px;font-size:14.5px}
+  .search-row input:focus{outline:none;border-color:var(--wa-green)}
 
   /* ===== قائمة المحادثات ===== */
   .conv-list{flex:1;overflow-y:auto;background:#fff}
@@ -104,6 +107,12 @@
   .ticks{color:#53BDEB;font-size:12px}
   .att-img{max-width:100%;max-height:280px;border-radius:8px;display:block;margin-bottom:4px}
   .att-file{display:inline-block;background:#F0F2F5;color:var(--wa-green-dark);padding:8px 12px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;margin-bottom:4px}
+  .rec-bar{display:flex;align-items:center;gap:10px;background:#fff;margin:0 10px 8px;padding:10px 14px;border-radius:24px;box-shadow:0 1px 2px rgba(0,0,0,.12);font-size:14px;color:var(--wa-danger);font-weight:700;flex-shrink:0}
+  .rec-dot{width:11px;height:11px;border-radius:50%;background:var(--wa-danger);animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.2}}
+  .rec-cancel{margin-inline-start:auto;background:none;border:none;color:var(--wa-ink-2);font-size:14px;cursor:pointer;font-weight:700}
+  .rec-send{background:var(--wa-green-dark);color:#fff;border:none;border-radius:18px;padding:8px 16px;font-size:14px;font-weight:700;cursor:pointer}
+  .msg.selected{outline:2.5px solid var(--wa-green);outline-offset:1px}
 
   /* شريط النافذة المغلقة */
   .window-banner{background:#FDECEC;color:#B3261E;font-size:13px;padding:9px 14px;text-align:center;flex-shrink:0;border-bottom:1px solid #F6CFCF}
@@ -168,8 +177,13 @@
   <div class="screen" id="listScreen">
     <div class="topbar">
       <div class="title">Sima Chat</div>
+      <button class="icon-btn" id="searchBtn" title="بحث">🔍</button>
       <button class="icon-btn" id="refreshBtn" title="تحديث">⟳</button>
       <button class="icon-btn" id="logoutBtn" title="خروج">⎋</button>
+    </div>
+    <div class="search-row" id="searchRow" style="display:none">
+      <input type="text" id="searchInput" placeholder="ابحثي بالاسم أو الرقم…">
+      <button class="icon-btn" id="searchClose" style="color:var(--wa-ink-2)">✕</button>
     </div>
     <div class="tabs">
       <div class="tab active" data-tab="all">الكل <span class="cnt" id="cntAll">0</span></div>
@@ -200,7 +214,13 @@
         <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
       </div>
       <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
+      <button class="send-btn" id="micBtn" title="رسالة صوتية" style="background:#fff;color:var(--wa-green-dark);box-shadow:0 1px 2px rgba(0,0,0,.08)">🎤</button>
       <button class="send-btn" id="sendBtn">◀</button>
+    </div>
+    <div class="rec-bar" id="recBar" style="display:none">
+      <span class="rec-dot"></span><span id="recTime">0:00</span> — جارٍ التسجيل
+      <button class="rec-cancel" id="recCancel">✕ إلغاء</button>
+      <button class="rec-send" id="recSend">إرسال ◀</button>
     </div>
   </div>
 
@@ -225,6 +245,13 @@
   <div class="sheet" id="tplSheet">
     <h3>اختاري قالباً للإرسال</h3>
     <div id="tplList"><div class="spin"></div></div>
+  </div>
+
+  <div class="sheet" id="msgSheet">
+    <h3>خيارات الرسالة</h3>
+    <div class="row" id="msgCopy"><div class="ic">📋</div> نسخ النص</div>
+    <div class="row" id="msgShare"><div class="ic">↗️</div> مشاركة</div>
+    <div class="row" id="msgDelete" style="color:var(--wa-danger)"><div class="ic">🗑</div> حذف الرسالة (من النظام فقط)</div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -434,6 +461,7 @@ async function refreshChat(scrollToEnd){
   }catch(e){ /* صمت */ }
 }
 function renderMessages(msgs, forceScroll){
+  lastMsgs = msgs;
   const body = $('chatBody');
   const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
   let html='', lastDay='';
@@ -452,7 +480,7 @@ function renderMessages(msgs, forceScroll){
       else if(a.file_type==='audio') att += '<audio src="'+url+'" controls style="max-width:100%"></audio>';
       else att += '<a href="'+url+'" target="_blank" class="att-file">📄 فتح الملف المرفق</a>';
     }
-    html += '<div class="'+cls+'">'
+    html += '<div class="'+cls+'" data-mid="'+m.id+'">'
       + (m.private ? '<div class="note-tag">🗒 ملاحظة خاصة — لا يراها العميل</div>' : '')
       + att
       + esc(m.content||'')
@@ -460,6 +488,7 @@ function renderMessages(msgs, forceScroll){
       + '</div>';
   }
   body.innerHTML = html || '<div class="empty">لا رسائل بعد</div>';
+  bindMsgActions();
   if(forceScroll || nearBottom) body.scrollTop = body.scrollHeight;
 }
 
@@ -488,6 +517,50 @@ $('fileInput').addEventListener('change', async ()=>{
   }catch(e){ toast('تعذّر إرسال المرفق'); }
   finally{ $('fileInput').value=''; }
 });
+
+/* ---------- تسجيل رسالة صوتية 🎤 ---------- */
+let recStream=null, recorder=null, recChunks=[], recTimer=null, recSecs=0, recSendOnStop=false;
+$('micBtn').onclick = async ()=>{
+  if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال صوت، فقط قالب 📋'); return; }
+  try{
+    recStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  }catch(e){ toast('تعذّر الوصول للميكروفون — تحققي من الإذن'); return; }
+  const mime = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
+             : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+  recorder = new MediaRecorder(recStream, mime?{mimeType:mime}:{});
+  recChunks=[]; recSecs=0; recSendOnStop=false;
+  recorder.ondataavailable = e=>{ if(e.data.size) recChunks.push(e.data); };
+  recorder.onstop = async ()=>{
+    recStream.getTracks().forEach(t=>t.stop());
+    clearInterval(recTimer);
+    $('recBar').style.display='none'; $('composer').style.display='flex';
+    if(!recSendOnStop || !recChunks.length) return;
+    const type = recorder.mimeType || 'audio/webm';
+    const ext = type.includes('ogg') ? 'ogg' : 'webm';
+    const blob = new Blob(recChunks, {type});
+    toast('جارٍ إرسال الرسالة الصوتية…');
+    try{
+      const fd = new FormData();
+      fd.append('attachments[]', blob, 'voice-'+Date.now()+'.'+ext);
+      fd.append('message_type','outgoing');
+      const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages',{
+        method:'POST', headers:{'api_access_token':TOKEN}, body:fd
+      });
+      if(!res.ok) throw 0;
+      toast('أُرسلت الرسالة الصوتية ✓'); await refreshChat(true);
+    }catch(e){ toast('تعذّر إرسال الصوت'); }
+  };
+  recorder.start();
+  $('composer').style.display='none'; $('recBar').style.display='flex';
+  $('recTime').textContent='0:00';
+  recTimer = setInterval(()=>{
+    recSecs++;
+    $('recTime').textContent = Math.floor(recSecs/60)+':'+String(recSecs%60).padStart(2,'0');
+    if(recSecs>=120){ recSendOnStop=true; recorder.stop(); }  // حد دقيقتين
+  },1000);
+};
+$('recCancel').onclick = ()=>{ recSendOnStop=false; recorder?.stop(); toast('أُلغي التسجيل'); };
+$('recSend').onclick = ()=>{ recSendOnStop=true; recorder?.stop(); };
 
 /* ---------- إرسال ---------- */
 let noteMode = false;
@@ -578,6 +651,87 @@ async function sendTemplate(tpl){
     toast('تم إرسال القالب ✓'); await refreshChat(true);
   }catch(e){ toast('تعذّر إرسال القالب'); }
 }
+
+/* ---------- بحث جهات الاتصال 🔍 ---------- */
+let searchTimer=null;
+$('searchBtn').onclick = ()=>{
+  const r=$('searchRow');
+  r.style.display = r.style.display==='none' ? 'flex' : 'none';
+  if(r.style.display==='flex') $('searchInput').focus();
+  else { $('searchInput').value=''; loadConversations(true); }
+};
+$('searchClose').onclick = ()=>{ $('searchRow').style.display='none'; $('searchInput').value=''; loadConversations(true); };
+$('searchInput').addEventListener('input', ()=>{
+  clearTimeout(searchTimer);
+  const q = $('searchInput').value.trim();
+  if(q.length<2){ return; }
+  searchTimer = setTimeout(()=>doSearch(q), 450);
+});
+async function doSearch(q){
+  $('convList').innerHTML='<div class="spin"></div>';
+  try{
+    const d = await api('/contacts/search?q='+encodeURIComponent(q)+'&page=1');
+    const list = d.payload || [];
+    if(!list.length){ $('convList').innerHTML='<div class="empty">لا نتائج لـ «'+esc(q)+'»</div>'; return; }
+    $('convList').innerHTML = list.map(c=>{
+      const name = c.name || 'بدون اسم';
+      return '<div class="conv" data-cid="'+c.id+'">'
+        +'<div class="avatar" style="background:'+avatarColor(name)+'">'+esc(initials(name))+'</div>'
+        +'<div class="conv-mid"><div class="conv-name">'+esc(name)+(c.blocked?' <span class="wait-tag" style="background:#FDECEC;color:#B3261E">محظور</span>':'')+'</div>'
+        +'<div class="conv-last" style="direction:ltr;text-align:right">'+esc(c.phone_number||'')+'</div></div></div>';
+    }).join('');
+    $('convList').querySelectorAll('.conv[data-cid]').forEach(row=> row.onclick = ()=> openContactConversation(+row.dataset.cid));
+  }catch(e){ $('convList').innerHTML='<div class="empty">تعذّر البحث — حاولي مجدداً</div>'; }
+}
+async function openContactConversation(contactId){
+  try{
+    const d = await api('/contacts/'+contactId+'/conversations');
+    const convs = d.payload || [];
+    if(!convs.length){ toast('لا توجد محادثات لهذا العميل'); return; }
+    const conv = convs[0];
+    conversations = [conv].concat(conversations.filter(x=>x.id!==conv.id));
+    openConversation(conv.id);
+  }catch(e){ toast('تعذّر فتح المحادثة'); }
+}
+
+/* ---------- خيارات الرسالة (نسخ/مشاركة/حذف) ---------- */
+let lastMsgs=[], selMsg=null, pressTimer=null;
+function bindMsgActions(){
+  $('chatBody').querySelectorAll('.msg[data-mid]').forEach(el=>{
+    const open = ()=>{
+      selMsg = lastMsgs.find(m=>m.id===+el.dataset.mid);
+      if(!selMsg) return;
+      document.querySelectorAll('.msg.selected').forEach(x=>x.classList.remove('selected'));
+      el.classList.add('selected');
+      openSheet('msgSheet');
+    };
+    el.addEventListener('contextmenu', e=>{ e.preventDefault(); open(); });
+    el.addEventListener('touchstart', ()=>{ pressTimer=setTimeout(open,550); }, {passive:true});
+    el.addEventListener('touchend', ()=>clearTimeout(pressTimer));
+    el.addEventListener('touchmove', ()=>clearTimeout(pressTimer));
+  });
+}
+$('msgCopy').onclick = async ()=>{
+  closeSheets();
+  try{ await navigator.clipboard.writeText(selMsg?.content||''); toast('نُسخ النص ✓'); }
+  catch(e){ toast('تعذّر النسخ'); }
+};
+$('msgShare').onclick = async ()=>{
+  closeSheets();
+  const att = (selMsg?.attachments||[])[0];
+  const payload = att ? {url: att.data_url||att.file_url} : {text: selMsg?.content||''};
+  if(navigator.share){ try{ await navigator.share(payload); }catch(e){} }
+  else { try{ await navigator.clipboard.writeText(payload.url||payload.text); toast('نُسخ للمشاركة ✓'); }catch(e){ toast('المشاركة غير مدعومة هنا'); } }
+};
+$('msgDelete').onclick = async ()=>{
+  closeSheets();
+  if(!selMsg) return;
+  if(!confirm('حذف الرسالة من النظام؟\nتنبيه: إن كانت وصلت للعميل فستبقى على هاتفه — الحذف هنا فقط.')) return;
+  try{
+    await api('/conversations/'+currentConv.id+'/messages/'+selMsg.id, {method:'DELETE'});
+    toast('حُذفت الرسالة ✓'); await refreshChat(false);
+  }catch(e){ toast('تعذّر الحذف'); }
+};
 
 /* ---------- جهة الاتصال: تعديل الاسم + الحظر ---------- */
 function contactOf(){ return currentConv?.meta?.sender || {}; }

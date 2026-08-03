@@ -65,6 +65,7 @@
   .inbox-bar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-line);overflow-x:auto;flex-shrink:0}
   .inbox-chip{font-size:13px;padding:6px 14px;border-radius:16px;background:#F0F2F5;color:var(--wa-ink-2);white-space:nowrap;cursor:pointer;font-weight:600}
   .inbox-chip.active{background:#D1F4E8;color:var(--wa-green-dark)}
+  .sort-chip{background:var(--wa-green-dark);color:#fff}
 
   /* ===== قائمة المحادثات ===== */
   .conv-list{flex:1;overflow-y:auto;background:#fff}
@@ -249,6 +250,7 @@ let TOKEN = store.get('sima_token') || '';
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let currentInbox = 0;          // 0 = كل الصناديق
+let currentSort = 'last_user_message_at'; // الأقدم انتظاراً أولاً — أو 'latest' للأحدث نشاطاً
 let inboxesList = [];
 let convPage = 1;
 let convHasMore = true;
@@ -327,7 +329,7 @@ async function loadConversations(reset=true){
   try{
     if(reset){ convPage = 1; convHasMore = true; }
     const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
-    let url = '/conversations?status=open&assignee_type='+assigneeType+'&sort_by=latest&page='+convPage;
+    let url = '/conversations?status=open&assignee_type='+assigneeType+'&sort_by='+currentSort+'&page='+convPage;
     if(currentInbox) url += '&inbox_id='+currentInbox;
     const data = await api(url);
     const page = data.data?.payload || [];
@@ -488,9 +490,16 @@ async function loadInboxes(){
 }
 function renderInboxBar(){
   const bar = $('inboxBar');
+  const sortChip = '<div class="inbox-chip sort-chip" id="sortChip">⇅ '
+    + (currentSort==='last_user_message_at' ? 'الأقدم انتظاراً' : 'الأحدث نشاطاً') + '</div>';
   const chips = [{id:0, name:'كل الصناديق'}].concat(inboxesList.map(i=>({id:i.id, name:i.name})));
-  bar.innerHTML = chips.map(c=>'<div class="inbox-chip'+(currentInbox===c.id?' active':'')+'" data-id="'+c.id+'">'+esc(c.name)+'</div>').join('');
-  bar.querySelectorAll('.inbox-chip').forEach(ch=> ch.onclick = ()=>{
+  bar.innerHTML = sortChip + chips.map(c=>'<div class="inbox-chip'+(currentInbox===c.id?' active':'')+'" data-id="'+c.id+'">'+esc(c.name)+'</div>').join('');
+  $('sortChip').onclick = ()=>{
+    currentSort = currentSort==='last_user_message_at' ? 'latest' : 'last_user_message_at';
+    renderInboxBar();
+    $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
+  };
+  bar.querySelectorAll('.inbox-chip[data-id]').forEach(ch=> ch.onclick = ()=>{
     currentInbox = +ch.dataset.id; renderInboxBar();
     $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
   });

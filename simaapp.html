@@ -250,7 +250,7 @@ let TOKEN = store.get('sima_token') || '';
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let currentInbox = 0;          // 0 = كل الصناديق
-let currentSort = 'last_user_message_at'; // الأقدم انتظاراً أولاً — أو 'latest' للأحدث نشاطاً
+let currentSort = 'waiting_since'; // الأقدم انتظاراً أولاً — أو 'latest' للأحدث نشاطاً
 let inboxesList = [];
 let convPage = 1;
 let convHasMore = true;
@@ -491,11 +491,11 @@ async function loadInboxes(){
 function renderInboxBar(){
   const bar = $('inboxBar');
   const sortChip = '<div class="inbox-chip sort-chip" id="sortChip">⇅ '
-    + (currentSort==='last_user_message_at' ? 'الأقدم انتظاراً' : 'الأحدث نشاطاً') + '</div>';
+    + (currentSort==='waiting_since' ? 'الأقدم انتظاراً' : 'الأحدث نشاطاً') + '</div>';
   const chips = [{id:0, name:'كل الصناديق'}].concat(inboxesList.map(i=>({id:i.id, name:i.name})));
   bar.innerHTML = sortChip + chips.map(c=>'<div class="inbox-chip'+(currentInbox===c.id?' active':'')+'" data-id="'+c.id+'">'+esc(c.name)+'</div>').join('');
   $('sortChip').onclick = ()=>{
-    currentSort = currentSort==='last_user_message_at' ? 'latest' : 'last_user_message_at';
+    currentSort = currentSort==='waiting_since' ? 'latest' : 'waiting_since';
     renderInboxBar();
     $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
   };

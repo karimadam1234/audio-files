@@ -358,7 +358,9 @@ function renderList(append=false){
   el.innerHTML = sorted.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
-    const last = c.last_non_activity_message?.content || '…';
+    const lm = c.last_non_activity_message;
+    const last = lm?.content || (lm?.attachments?.length ? '📎 مرفق (صورة/ملف)' : '…');
+    const ts = c.timestamp || c.last_activity_at || lm?.created_at || c.created_at;
     const unread = c.unread_count || 0;
     const chips = (c.labels||[]).map(l=>{
       const def = allLabels.find(x=>x.title===l);
@@ -371,7 +373,7 @@ function renderList(append=false){
       + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
       + (chips?'<div class="chips">'+chips+'</div>':'')
       + '</div>'
-      + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(c.timestamp)+'</div>'
+      + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(ts)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '</div></div>';
   }).join('') + (convHasMore ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');

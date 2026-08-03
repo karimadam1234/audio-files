@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#008069">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Sima Chat</title>
+<style>
+  :root{
+    --wa-green-dark:#008069;   /* شريط علوي */
+    --wa-green:#00A884;        /* أزرار وإجراءات */
+    --wa-green-light:#D9FDD3;  /* فقاعة صادرة */
+    --wa-bg:#EFEAE2;           /* خلفية الدردشة */
+    --wa-note:#FFF3C2;         /* ملاحظة خاصة */
+    --wa-ink:#111B21;
+    --wa-ink-2:#667781;
+    --wa-line:#E9EDEF;
+    --wa-unread:#25D366;
+    --wa-danger:#EA4335;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:"Segoe UI","Helvetica Neue",Tahoma,Arial,sans-serif;
+    background:#F0F2F5;color:var(--wa-ink);overflow:hidden;
+  }
+  #app{height:100dvh;display:flex;flex-direction:column;max-width:560px;margin:0 auto;background:#fff;position:relative}
+
+  /* ===== شاشات ===== */
+  .screen{display:none;flex-direction:column;height:100%;}
+  .screen.active{display:flex}
+
+  /* ===== شريط علوي ===== */
+  .topbar{background:var(--wa-green-dark);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:10px;min-height:58px;flex-shrink:0}
+  .topbar .title{font-size:19px;font-weight:600;flex:1}
+  .topbar .sub{font-size:12px;opacity:.85}
+  .icon-btn{background:none;border:none;color:#fff;font-size:20px;padding:8px;border-radius:50%;cursor:pointer;line-height:1}
+  .icon-btn:active{background:rgba(255,255,255,.15)}
+  .back-btn{font-size:22px}
+
+  /* ===== دخول ===== */
+  #loginScreen{background:#fff;justify-content:center;padding:28px}
+  .login-card{display:flex;flex-direction:column;gap:16px}
+  .login-logo{width:84px;height:84px;border-radius:50%;background:var(--wa-green-dark);color:#fff;display:flex;align-items:center;justify-content:center;font-size:38px;margin:0 auto 6px}
+  .login-card h1{font-size:22px;text-align:center;color:var(--wa-green-dark)}
+  .login-card p{font-size:14px;color:var(--wa-ink-2);text-align:center;line-height:1.6}
+  .field label{display:block;font-size:13px;color:var(--wa-ink-2);margin-bottom:6px}
+  .field input{width:100%;padding:13px 14px;border:1.5px solid var(--wa-line);border-radius:10px;font-size:15px;direction:ltr;text-align:left}
+  .field input:focus{outline:none;border-color:var(--wa-green)}
+  .btn-primary{background:var(--wa-green-dark);color:#fff;border:none;padding:14px;border-radius:26px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit}
+  .btn-primary:active{opacity:.85}
+  .login-error{color:var(--wa-danger);font-size:13px;text-align:center;min-height:18px}
+
+  /* ===== تبويبات ===== */
+  .tabs{display:flex;background:var(--wa-green-dark);flex-shrink:0}
+  .tab{flex:1;text-align:center;padding:11px 4px;color:rgba(255,255,255,.7);font-size:14px;font-weight:600;border-bottom:3px solid transparent;cursor:pointer}
+  .tab.active{color:#fff;border-bottom-color:#fff}
+  .tab .cnt{font-size:11px;background:rgba(255,255,255,.25);border-radius:10px;padding:1px 7px;margin-inline-start:4px}
+
+  /* ===== قائمة المحادثات ===== */
+  .conv-list{flex:1;overflow-y:auto;background:#fff}
+  .conv{display:flex;gap:12px;padding:12px 14px;border-bottom:1px solid #F5F6F6;cursor:pointer;align-items:center}
+  .conv:active{background:#F5F6F6}
+  .avatar{width:50px;height:50px;border-radius:50%;background:#DFE5E7;color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600;flex-shrink:0}
+  .conv-mid{flex:1;min-width:0}
+  .conv-name{font-size:16px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .conv-last{font-size:13.5px;color:var(--wa-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .conv-side{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0}
+  .conv-time{font-size:12px;color:var(--wa-ink-2)}
+  .conv-time.hot{color:var(--wa-unread);font-weight:600}
+  .badge{background:var(--wa-unread);color:#fff;font-size:12px;font-weight:600;border-radius:12px;min-width:21px;height:21px;display:flex;align-items:center;justify-content:center;padding:0 6px}
+  .chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+  .chip{font-size:10.5px;padding:1px 8px;border-radius:9px;color:#fff;font-weight:600}
+  .empty{padding:60px 30px;text-align:center;color:var(--wa-ink-2);font-size:14.5px;line-height:1.8}
+
+  /* ===== شاشة المحادثة ===== */
+  #chatScreen{background:var(--wa-bg)}
+  .chat-body{flex:1;overflow-y:auto;padding:12px 10px 6px;display:flex;flex-direction:column;gap:3px;
+    background:
+      radial-gradient(circle at 20% 30%, rgba(0,0,0,.015) 0 2px, transparent 3px),
+      radial-gradient(circle at 70% 60%, rgba(0,0,0,.015) 0 2px, transparent 3px),
+      var(--wa-bg);
+  }
+  .day-sep{align-self:center;background:#fff;color:var(--wa-ink-2);font-size:12px;padding:5px 12px;border-radius:8px;margin:8px 0;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+  .msg{max-width:82%;padding:7px 10px 5px;border-radius:10px;font-size:14.5px;line-height:1.55;box-shadow:0 1px 1px rgba(0,0,0,.08);word-wrap:break-word;position:relative}
+  .msg.in{align-self:flex-start;background:#fff;border-start-start-radius:2px}
+  .msg.out{align-self:flex-end;background:var(--wa-green-light);border-start-end-radius:2px}
+  .msg.note{align-self:flex-end;background:var(--wa-note);border:1px dashed #E4C441}
+  .msg .meta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:11px;color:var(--wa-ink-2);margin-top:3px}
+  .msg .note-tag{font-size:10.5px;color:#8A6D00;font-weight:700;margin-bottom:2px}
+  .msg.activity{align-self:center;background:#FDF3D7;color:#6b5d1f;font-size:12px;padding:5px 12px;border-radius:8px;box-shadow:none;max-width:92%;text-align:center}
+  .ticks{color:#53BDEB;font-size:12px}
+
+  /* شريط النافذة المغلقة */
+  .window-banner{background:#FDECEC;color:#B3261E;font-size:13px;padding:9px 14px;text-align:center;flex-shrink:0;border-bottom:1px solid #F6CFCF}
+  .window-banner b{font-weight:700}
+
+  /* ===== إدخال ===== */
+  .composer{display:flex;align-items:flex-end;gap:8px;padding:8px 10px;background:transparent;flex-shrink:0}
+  .composer-box{flex:1;background:#fff;border-radius:24px;display:flex;align-items:flex-end;padding:6px 8px 6px 12px;gap:6px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .composer textarea{flex:1;border:none;resize:none;font-size:15px;font-family:inherit;max-height:110px;line-height:1.5;padding:6px 4px;background:transparent}
+  .composer textarea:focus{outline:none}
+  .send-btn{width:46px;height:46px;border-radius:50%;background:var(--wa-green-dark);color:#fff;border:none;font-size:19px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+  .send-btn:disabled{opacity:.5}
+  .tpl-btn{width:46px;height:46px;border-radius:50%;background:#fff;color:var(--wa-green-dark);border:none;font-size:20px;cursor:pointer;flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .note-toggle{background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--wa-ink-2)}
+  .note-toggle.on{color:#C9A227}
+  .composer.note-mode .composer-box{background:var(--wa-note)}
+
+  /* ===== الأوراق السفلية (bottom sheets) ===== */
+  .sheet-mask{position:absolute;inset:0;background:rgba(0,0,0,.4);display:none;z-index:40}
+  .sheet-mask.open{display:block}
+  .sheet{position:absolute;bottom:0;left:0;right:0;background:#fff;border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));z-index:41;transform:translateY(100%);transition:transform .22s ease;max-height:75%;overflow-y:auto}
+  .sheet.open{transform:translateY(0)}
+  .sheet h3{font-size:16px;margin-bottom:14px;color:var(--wa-green-dark)}
+  .sheet .row{display:flex;align-items:center;gap:12px;padding:13px 6px;border-bottom:1px solid #F5F6F6;cursor:pointer;font-size:15px}
+  .sheet .row:active{background:#F5F6F6}
+  .sheet .row .ic{width:36px;height:36px;border-radius:50%;background:#F0F2F5;display:flex;align-items:center;justify-content:center;font-size:17px}
+  .tpl-card{border:1.5px solid var(--wa-line);border-radius:12px;padding:12px;margin-bottom:10px;cursor:pointer}
+  .tpl-card:active{border-color:var(--wa-green)}
+  .tpl-card .tname{font-weight:700;font-size:14px;direction:ltr;text-align:right}
+  .tpl-card .tbody{font-size:13.5px;color:var(--wa-ink-2);margin-top:6px;line-height:1.6}
+  .lbl-row{display:flex;align-items:center;gap:10px;padding:11px 6px;cursor:pointer;font-size:15px}
+  .lbl-dot{width:14px;height:14px;border-radius:50%}
+  .lbl-row input{margin-inline-start:auto;width:19px;height:19px;accent-color:var(--wa-green)}
+
+  .toast{position:absolute;bottom:86px;left:50%;transform:translateX(-50%);background:#333;color:#fff;font-size:13.5px;padding:9px 18px;border-radius:20px;opacity:0;transition:opacity .25s;z-index:60;pointer-events:none;white-space:nowrap}
+  .toast.show{opacity:1}
+  .spin{border:3px solid #eee;border-top-color:var(--wa-green);border-radius:50%;width:26px;height:26px;animation:sp 1s linear infinite;margin:40px auto}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.sheet{transition:none}.spin{animation-duration:2s}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== شاشة الدخول ===== -->
+  <div class="screen active" id="loginScreen">
+    <div class="login-card">
+      <div class="login-logo">💬</div>
+      <h1>Sima Chat</h1>
+      <p>تطبيق خدمة عملاء Sima Confection<br>أدخلي رمز الوصول الخاص بحسابك</p>
+      <div class="field">
+        <label>رمز الوصول (Access Token)</label>
+        <input type="password" id="tokenInput" placeholder="XXXXXXXXXXXXXXXX" autocomplete="off">
+      </div>
+      <div class="login-error" id="loginError"></div>
+      <button class="btn-primary" id="loginBtn">دخول</button>
+      <p style="font-size:12px">الرمز موجود في: Chatwoot ← الملف الشخصي ← Access Token</p>
+    </div>
+  </div>
+
+  <!-- ===== قائمة المحادثات ===== -->
+  <div class="screen" id="listScreen">
+    <div class="topbar">
+      <div class="title">Sima Chat</div>
+      <button class="icon-btn" id="refreshBtn" title="تحديث">⟳</button>
+      <button class="icon-btn" id="logoutBtn" title="خروج">⎋</button>
+    </div>
+    <div class="tabs">
+      <div class="tab active" data-tab="all">الكل <span class="cnt" id="cntAll">0</span></div>
+      <div class="tab" data-tab="me">محادثاتي <span class="cnt" id="cntMe">0</span></div>
+      <div class="tab" data-tab="unassigned">غير معيّن <span class="cnt" id="cntUn">0</span></div>
+    </div>
+    <div class="conv-list" id="convList"><div class="spin"></div></div>
+  </div>
+
+  <!-- ===== شاشة المحادثة ===== -->
+  <div class="screen" id="chatScreen">
+    <div class="topbar">
+      <button class="icon-btn back-btn" id="backBtn">→</button>
+      <div style="flex:1;min-width:0">
+        <div class="title" id="chatName" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
+        <div class="sub" id="chatPhone" style="direction:ltr;text-align:right">—</div>
+      </div>
+      <button class="icon-btn" id="actionsBtn" title="إجراءات">⋮</button>
+    </div>
+    <div class="window-banner" id="windowBanner" style="display:none">⏱ نافذة الـ24 ساعة مغلقة — <b>الرد متاح عبر قالب فقط</b></div>
+    <div class="chat-body" id="chatBody"></div>
+    <div class="composer" id="composer">
+      <button class="tpl-btn" id="tplBtn" title="إرسال قالب" style="display:none">📋</button>
+      <div class="composer-box">
+        <button class="note-toggle" id="noteToggle" title="ملاحظة خاصة">🗒</button>
+        <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn">◀</button>
+    </div>
+  </div>
+
+  <!-- ===== أوراق سفلية ===== -->
+  <div class="sheet-mask" id="sheetMask"></div>
+
+  <div class="sheet" id="actionsSheet">
+    <h3>إجراءات المحادثة</h3>
+    <div class="row" id="actAssignMe"><div class="ic">🙋‍♀️</div> إسناد المحادثة لي</div>
+    <div class="row" id="actLabels"><div class="ic">🏷</div> تصنيف المحادثة (وسوم)</div>
+    <div class="row" id="actResolve"><div class="ic">✅</div> <span id="resolveTxt">حل المحادثة (إغلاق)</span></div>
+  </div>
+
+  <div class="sheet" id="labelsSheet">
+    <h3>وسوم المحادثة</h3>
+    <div id="labelsList"><div class="spin"></div></div>
+    <button class="btn-primary" id="saveLabelsBtn" style="width:100%;margin-top:12px">حفظ الوسوم</button>
+  </div>
+
+  <div class="sheet" id="tplSheet">
+    <h3>اختاري قالباً للإرسال</h3>
+    <div id="tplList"><div class="spin"></div></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* =========================================================
+   Sima Chat v1.0 — تطبيق وكلاء مخصص فوق Chatwoot API
+   يعمل على نفس نطاق الخادم (same-origin) بلا مشاكل CORS
+   ========================================================= */
+const ACCOUNT_ID = 2;
+const BASE = location.origin;           // https://chat.simaconfection.com
+const POLL_LIST_MS = 10000;
+const POLL_CHAT_MS = 6000;
+
+/* ---------- تخزين آمن (fallback للذاكرة إن مُنع) ---------- */
+const store = (()=> {
+  let mem = {};
+  const ok = (()=>{ try{ localStorage.setItem('_t','1'); localStorage.removeItem('_t'); return true; }catch(e){ return false; } })();
+  return {
+    get: k => ok ? localStorage.getItem(k) : (mem[k] ?? null),
+    set: (k,v) => ok ? localStorage.setItem(k,v) : (mem[k]=v),
+    del: k => ok ? localStorage.removeItem(k) : delete mem[k]
+  };
+})();
+
+/* ---------- حالة ---------- */
+let TOKEN = store.get('sima_token') || '';
+let ME = null;                 // {id, name}
+let currentTab = 'all';
+let conversations = [];
+let currentConv = null;        // كائن المحادثة المفتوحة
+let allLabels = [];
+let inboxTemplates = {};       // inbox_id -> [templates]
+let listTimer = null, chatTimer = null;
+
+/* ---------- أدوات ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+function fmtTime(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleTimeString('ar-MA',{hour:'2-digit',minute:'2-digit'}); }
+function fmtDay(ts){ const d=new Date(ts*1000), now=new Date(); const dd=(a,b)=>a.toDateString()===b.toDateString();
+  if(dd(d,now)) return 'اليوم';
+  const y=new Date(now); y.setDate(y.getDate()-1); if(dd(d,y)) return 'أمس';
+  return d.toLocaleDateString('ar-MA',{day:'numeric',month:'long'}); }
+function initials(name){ return (name||'؟').trim().charAt(0).toUpperCase(); }
+function avatarColor(name){ const cs=['#6C8EBF','#B85450','#82B366','#9673A6','#D79B00','#5B9AA0']; let h=0; for(const c of (name||'')) h=(h*31+c.charCodeAt(0))>>>0; return cs[h%cs.length]; }
+
+async function api(path, opts={}){
+  const res = await fetch(BASE + '/api/v1/accounts/' + ACCOUNT_ID + path, {
+    ...opts,
+    headers: { 'api_access_token': TOKEN, 'Content-Type': 'application/json', ...(opts.headers||{}) }
+  });
+  if(res.status === 401) { logout(); throw new Error('unauthorized'); }
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : {};
+}
+
+/* ---------- شاشات ---------- */
+function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); $(id).classList.add('active'); }
+function closeSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); $('sheetMask').classList.remove('open'); }
+function openSheet(id){ closeSheets(); $('sheetMask').classList.add('open'); $(id).classList.add('open'); }
+$('sheetMask').onclick = closeSheets;
+
+/* ---------- دخول ---------- */
+async function tryLogin(){
+  const t = $('tokenInput').value.trim() || TOKEN;
+  if(!t){ $('loginError').textContent='أدخلي رمز الوصول أولاً'; return; }
+  TOKEN = t; $('loginError').textContent=''; $('loginBtn').textContent='جارٍ التحقق…';
+  try{
+    const res = await fetch(BASE + '/api/v1/profile', { headers:{'api_access_token':TOKEN} });
+    if(!res.ok) throw 0;
+    const p = await res.json();
+    ME = { id: p.id, name: p.name };
+    store.set('sima_token', TOKEN);
+    show('listScreen'); startListPolling(); loadLabels(); loadInboxes();
+  }catch(e){
+    $('loginError').textContent='رمز غير صحيح أو تعذّر الاتصال بالخادم';
+  }finally{ $('loginBtn').textContent='دخول'; }
+}
+function logout(){
+  store.del('sima_token'); TOKEN=''; ME=null;
+  clearInterval(listTimer); clearInterval(chatTimer);
+  $('tokenInput').value=''; show('loginScreen');
+}
+$('loginBtn').onclick = tryLogin;
+$('tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin(); });
+$('logoutBtn').onclick = ()=>{ if(confirm('تسجيل الخروج؟')) logout(); };
+
+/* ---------- قائمة المحادثات ---------- */
+async function loadConversations(){
+  try{
+    const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
+    const data = await api('/conversations?status=open&assignee_type='+assigneeType+'&sort_by=latest');
+    conversations = data.data?.payload || [];
+    const meta = data.data?.meta || {};
+    $('cntAll').textContent = meta.all_count ?? '';
+    $('cntMe').textContent = meta.mine_count ?? '';
+    $('cntUn').textContent = meta.unassigned_count ?? '';
+    renderList();
+  }catch(e){ /* صمت أثناء الاستطلاع */ }
+}
+function renderList(){
+  const el = $('convList');
+  if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
+  el.innerHTML = conversations.map(c=>{
+    const s = c.meta?.sender || {};
+    const name = s.name || s.phone_number || 'بدون اسم';
+    const last = c.last_non_activity_message?.content || '…';
+    const unread = c.unread_count || 0;
+    const chips = (c.labels||[]).map(l=>{
+      const def = allLabels.find(x=>x.title===l);
+      return '<span class="chip" style="background:'+(def?.color||'#999')+'">'+esc(l)+'</span>';
+    }).join('');
+    return '<div class="conv" data-id="'+c.id+'">'
+      + '<div class="avatar" style="background:'+avatarColor(name)+'">'+esc(initials(name))+'</div>'
+      + '<div class="conv-mid"><div class="conv-name">'+esc(name)+'</div>'
+      + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
+      + (chips?'<div class="chips">'+chips+'</div>':'')
+      + '</div>'
+      + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtTime(c.timestamp)+'</div>'
+      + (unread?'<div class="badge">'+unread+'</div>':'')
+      + '</div></div>';
+  }).join('');
+  el.querySelectorAll('.conv').forEach(d=> d.onclick = ()=> openConversation(+d.dataset.id));
+}
+function startListPolling(){
+  clearInterval(listTimer);
+  loadConversations();
+  listTimer = setInterval(loadConversations, POLL_LIST_MS);
+}
+document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); currentTab = t.dataset.tab;
+  $('convList').innerHTML='<div class="spin"></div>'; loadConversations();
+});
+$('refreshBtn').onclick = ()=>{ loadConversations(); toast('تم التحديث'); };
+
+/* ---------- فتح محادثة ---------- */
+async function openConversation(id){
+  currentConv = conversations.find(c=>c.id===id) || {id};
+  const s = currentConv.meta?.sender || {};
+  $('chatName').textContent = s.name || 'محادثة #'+id;
+  $('chatPhone').textContent = s.phone_number || '';
+  $('chatBody').innerHTML = '<div class="spin"></div>';
+  show('chatScreen');
+  await refreshChat(true);
+  clearInterval(chatTimer);
+  chatTimer = setInterval(()=>refreshChat(false), POLL_CHAT_MS);
+}
+$('backBtn').onclick = ()=>{ clearInterval(chatTimer); currentConv=null; show('listScreen'); loadConversations(); };
+
+async function refreshChat(scrollToEnd){
+  if(!currentConv) return;
+  try{
+    // حالة النافذة من بيانات المحادثة
+    const convData = await api('/conversations/'+currentConv.id);
+    currentConv = {...currentConv, ...convData};
+    const canReply = convData.can_reply !== false;
+    $('windowBanner').style.display = canReply ? 'none' : 'block';
+    $('tplBtn').style.display = canReply ? 'none' : 'flex';
+    $('msgInput').placeholder = canReply ? 'اكتبي رسالة' : 'النافذة مغلقة — أرسلي قالباً 📋 أو ملاحظة خاصة 🗒';
+    $('resolveTxt').textContent = (convData.status==='resolved') ? 'إعادة فتح المحادثة' : 'حل المحادثة (إغلاق)';
+
+    const msgs = await api('/conversations/'+currentConv.id+'/messages');
+    renderMessages(msgs.payload || [], scrollToEnd);
+  }catch(e){ /* صمت */ }
+}
+function renderMessages(msgs, forceScroll){
+  const body = $('chatBody');
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
+  let html='', lastDay='';
+  for(const m of msgs){
+    const day = fmtDay(m.created_at);
+    if(day!==lastDay){ html += '<div class="day-sep">'+day+'</div>'; lastDay=day; }
+    if(m.message_type===2){ html += '<div class="msg activity">'+esc(m.content)+'</div>'; continue; }
+    const isOut = m.message_type===1;
+    const cls = m.private ? 'msg out note' : (isOut ? 'msg out' : 'msg in');
+    html += '<div class="'+cls+'">'
+      + (m.private ? '<div class="note-tag">🗒 ملاحظة خاصة — لا يراها العميل</div>' : '')
+      + esc(m.content||'')
+      + '<div class="meta">'+fmtTime(m.created_at)+(isOut&&!m.private?' <span class="ticks">✓✓</span>':'')+'</div>'
+      + '</div>';
+  }
+  body.innerHTML = html || '<div class="empty">لا رسائل بعد</div>';
+  if(forceScroll || nearBottom) body.scrollTop = body.scrollHeight;
+}
+
+/* ---------- إرسال ---------- */
+let noteMode = false;
+$('noteToggle').onclick = ()=>{
+  noteMode = !noteMode;
+  $('noteToggle').classList.toggle('on', noteMode);
+  $('composer').classList.toggle('note-mode', noteMode);
+  $('msgInput').placeholder = noteMode ? 'ملاحظة خاصة (داخلية فقط)…' : 'اكتبي رسالة';
+};
+const inputEl = $('msgInput');
+inputEl.addEventListener('input', ()=>{ inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,110)+'px'; });
+
+$('sendBtn').onclick = sendMessage;
+async function sendMessage(){
+  const content = inputEl.value.trim();
+  if(!content || !currentConv) return;
+  const canReply = currentConv.can_reply !== false;
+  if(!canReply && !noteMode){ toast('النافذة مغلقة — استخدمي زر القالب 📋'); return; }
+  $('sendBtn').disabled = true;
+  try{
+    await api('/conversations/'+currentConv.id+'/messages', {
+      method:'POST',
+      body: JSON.stringify({ content, message_type:'outgoing', private: noteMode })
+    });
+    inputEl.value=''; inputEl.style.height='auto';
+    if(noteMode){ noteMode=false; $('noteToggle').classList.remove('on'); $('composer').classList.remove('note-mode'); inputEl.placeholder='اكتبي رسالة'; }
+    await refreshChat(true);
+  }catch(e){ toast('تعذّر الإرسال — حاولي مجدداً'); }
+  finally{ $('sendBtn').disabled = false; }
+}
+
+/* ---------- القوالب ---------- */
+async function loadInboxes(){
+  try{
+    const data = await api('/inboxes');
+    for(const ib of (data.payload||[])){
+      if(ib.message_templates?.length) inboxTemplates[ib.id] = ib.message_templates;
+    }
+  }catch(e){}
+}
+$('tplBtn').onclick = async ()=>{
+  openSheet('tplSheet');
+  const inboxId = currentConv?.inbox_id;
+  let tpls = inboxTemplates[inboxId];
+  if(!tpls){ await loadInboxes(); tpls = inboxTemplates[inboxId]; }
+  const el = $('tplList');
+  if(!tpls?.length){ el.innerHTML='<div class="empty">لا توجد قوالب معتمدة لهذا الصندوق.<br>القوالب تُعتمد من WhatsApp Manager ثم تُزامن.</div>'; return; }
+  const usable = tpls.filter(t=> t.status ? String(t.status).toLowerCase()==='approved' : true);
+  el.innerHTML = usable.map((t,i)=>{
+    const bodyC = (t.components||[]).find(c=>c.type==='BODY');
+    return '<div class="tpl-card" data-i="'+i+'">'
+      +'<div class="tname">'+esc(t.name)+' · '+esc(t.language||'')+'</div>'
+      +'<div class="tbody">'+esc(bodyC?.text||'')+'</div></div>';
+  }).join('');
+  el.querySelectorAll('.tpl-card').forEach(card=> card.onclick = ()=> sendTemplate(usable[+card.dataset.i]));
+};
+async function sendTemplate(tpl){
+  closeSheets();
+  const bodyC = (tpl.components||[]).find(c=>c.type==='BODY');
+  const text = bodyC?.text || tpl.name;
+  if(/{{\s*\d+\s*}}/.test(text)){ toast('هذا القالب يحتاج متغيرات — أرسليه من واجهة الويب'); return; }
+  try{
+    await api('/conversations/'+currentConv.id+'/messages', {
+      method:'POST',
+      body: JSON.stringify({
+        content: text, message_type:'outgoing',
+        template_params: { name: tpl.name, category: tpl.category, language: tpl.language, processed_params: {} }
+      })
+    });
+    toast('تم إرسال القالب ✓'); await refreshChat(true);
+  }catch(e){ toast('تعذّر إرسال القالب'); }
+}
+
+/* ---------- الإجراءات ---------- */
+$('actionsBtn').onclick = ()=> openSheet('actionsSheet');
+$('actAssignMe').onclick = async ()=>{
+  closeSheets();
+  try{ await api('/conversations/'+currentConv.id+'/assignments',{method:'POST',body:JSON.stringify({assignee_id: ME.id})});
+    toast('أُسندت المحادثة لكِ ✓'); refreshChat(false);
+  }catch(e){ toast('تعذّر الإسناد'); }
+};
+$('actResolve').onclick = async ()=>{
+  closeSheets();
+  try{ await api('/conversations/'+currentConv.id+'/toggle_status',{method:'POST'});
+    toast('تم تغيير حالة المحادثة ✓'); refreshChat(false);
+  }catch(e){ toast('تعذّر تغيير الحالة'); }
+};
+
+/* ---------- الوسوم ---------- */
+async function loadLabels(){
+  try{ const d = await api('/labels'); allLabels = d.payload || []; }catch(e){}
+}
+$('actLabels').onclick = async ()=>{
+  openSheet('labelsSheet');
+  if(!allLabels.length) await loadLabels();
+  const current = new Set(currentConv.labels || []);
+  $('labelsList').innerHTML = allLabels.map(l=>
+    '<label class="lbl-row"><span class="lbl-dot" style="background:'+l.color+'"></span>'
+    + esc(l.title)
+    + '<input type="checkbox" value="'+esc(l.title)+'" '+(current.has(l.title)?'checked':'')+'></label>'
+  ).join('') || '<div class="empty">لا توجد وسوم — أنشئيها من إعدادات Chatwoot</div>';
+};
+$('saveLabelsBtn').onclick = async ()=>{
+  const chosen = [...$('labelsList').querySelectorAll('input:checked')].map(i=>i.value);
+  try{
+    await api('/conversations/'+currentConv.id+'/labels',{method:'POST',body:JSON.stringify({labels:chosen})});
+    currentConv.labels = chosen; closeSheets(); toast('حُفظت الوسوم ✓'); loadConversations();
+  }catch(e){ toast('تعذّر حفظ الوسوم'); }
+};
+
+/* ---------- إقلاع ---------- */
+if(TOKEN){ $('tokenInput').value = TOKEN; tryLogin(); }
+</script>
+</body>
+</html>

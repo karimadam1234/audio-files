@@ -80,6 +80,8 @@
   .badge{background:var(--wa-unread);color:#fff;font-size:12px;font-weight:600;border-radius:12px;min-width:21px;height:21px;display:flex;align-items:center;justify-content:center;padding:0 6px}
   .chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
   .chip{font-size:10.5px;padding:1px 8px;border-radius:9px;color:#fff;font-weight:600}
+  .conv.waiting{background:#F7FDF9;border-inline-start:3px solid var(--wa-unread)}
+  .wait-tag{font-size:10.5px;background:#E7F8EE;color:#1B7A4B;border-radius:8px;padding:1px 8px;font-weight:700;vertical-align:middle}
   .empty{padding:60px 30px;text-align:center;color:var(--wa-ink-2);font-size:14.5px;line-height:1.8}
 
   /* ===== شاشة المحادثة ===== */
@@ -343,7 +345,10 @@ function renderList(append=false){
   const el = $('convList');
   const keepScroll = append ? el.scrollTop : 0;
   if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
-  el.innerHTML = conversations.map(c=>{
+  // بانتظار الرد أولاً: آخر رسالة فعلية من العميل (وارد) تتصدر القائمة
+  const awaits = c => c.last_non_activity_message?.message_type === 0;
+  const sorted = conversations.filter(awaits).concat(conversations.filter(c=>!awaits(c)));
+  el.innerHTML = sorted.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
     const last = c.last_non_activity_message?.content || '…';
@@ -352,9 +357,10 @@ function renderList(append=false){
       const def = allLabels.find(x=>x.title===l);
       return '<span class="chip" style="background:'+(def?.color||'#999')+'">'+esc(l)+'</span>';
     }).join('');
-    return '<div class="conv" data-id="'+c.id+'">'
+    const waiting = awaits(c);
+    return '<div class="conv'+(waiting?' waiting':'')+'" data-id="'+c.id+'">'
       + '<div class="avatar" style="background:'+avatarColor(name)+'">'+esc(initials(name))+'</div>'
-      + '<div class="conv-mid"><div class="conv-name">'+esc(name)+'</div>'
+      + '<div class="conv-mid"><div class="conv-name">'+esc(name)+(waiting?' <span class="wait-tag">بانتظار الرد</span>':'')+'</div>'
       + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
       + (chips?'<div class="chips">'+chips+'</div>':'')
       + '</div>'

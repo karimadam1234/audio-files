@@ -102,6 +102,8 @@
   .msg .note-tag{font-size:10.5px;color:#8A6D00;font-weight:700;margin-bottom:2px}
   .msg.activity{align-self:center;background:#FDF3D7;color:#6b5d1f;font-size:12px;padding:5px 12px;border-radius:8px;box-shadow:none;max-width:92%;text-align:center}
   .ticks{color:#53BDEB;font-size:12px}
+  .att-img{max-width:100%;max-height:280px;border-radius:8px;display:block;margin-bottom:4px}
+  .att-file{display:inline-block;background:#F0F2F5;color:var(--wa-green-dark);padding:8px 12px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;margin-bottom:4px}
 
   /* شريط النافذة المغلقة */
   .window-banner{background:#FDECEC;color:#B3261E;font-size:13px;padding:9px 14px;text-align:center;flex-shrink:0;border-bottom:1px solid #F6CFCF}
@@ -194,8 +196,10 @@
       <button class="tpl-btn" id="tplBtn" title="إرسال قالب" style="display:none">📋</button>
       <div class="composer-box">
         <button class="note-toggle" id="noteToggle" title="ملاحظة خاصة">🗒</button>
+        <button class="note-toggle" id="attachBtn" title="إرفاق صورة/فيديو/ملف">📎</button>
         <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
       </div>
+      <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
       <button class="send-btn" id="sendBtn">◀</button>
     </div>
   </div>
@@ -205,9 +209,11 @@
 
   <div class="sheet" id="actionsSheet">
     <h3>إجراءات المحادثة</h3>
+    <div class="row" id="actEditContact"><div class="ic">👤</div> تعديل اسم العميل (حفظ جهة الاتصال)</div>
     <div class="row" id="actAssignMe"><div class="ic">🙋‍♀️</div> إسناد المحادثة لي</div>
     <div class="row" id="actLabels"><div class="ic">🏷</div> تصنيف المحادثة (وسوم)</div>
     <div class="row" id="actResolve"><div class="ic">✅</div> <span id="resolveTxt">حل المحادثة (إغلاق)</span></div>
+    <div class="row" id="actBlock" style="color:var(--wa-danger)"><div class="ic">🚫</div> <span id="blockTxt">حظر هذا العميل</span></div>
   </div>
 
   <div class="sheet" id="labelsSheet">
@@ -437,8 +443,18 @@ function renderMessages(msgs, forceScroll){
     if(m.message_type===2){ html += '<div class="msg activity">'+esc(m.content)+'</div>'; continue; }
     const isOut = m.message_type===1;
     const cls = m.private ? 'msg out note' : (isOut ? 'msg out' : 'msg in');
+    let att = '';
+    for(const a of (m.attachments||[])){
+      const url = a.data_url || a.file_url || '';
+      if(!url) continue;
+      if(a.file_type==='image') att += '<a href="'+url+'" target="_blank"><img src="'+url+'" class="att-img" loading="lazy"></a>';
+      else if(a.file_type==='video') att += '<video src="'+url+'" class="att-img" controls preload="metadata"></video>';
+      else if(a.file_type==='audio') att += '<audio src="'+url+'" controls style="max-width:100%"></audio>';
+      else att += '<a href="'+url+'" target="_blank" class="att-file">📄 فتح الملف المرفق</a>';
+    }
     html += '<div class="'+cls+'">'
       + (m.private ? '<div class="note-tag">🗒 ملاحظة خاصة — لا يراها العميل</div>' : '')
+      + att
       + esc(m.content||'')
       + '<div class="meta">'+fmtTime(m.created_at)+(isOut&&!m.private?' <span class="ticks">✓✓</span>':'')+'</div>'
       + '</div>';
@@ -446,6 +462,32 @@ function renderMessages(msgs, forceScroll){
   body.innerHTML = html || '<div class="empty">لا رسائل بعد</div>';
   if(forceScroll || nearBottom) body.scrollTop = body.scrollHeight;
 }
+
+/* ---------- إرسال مرفقات (صورة/فيديو/PDF) ---------- */
+$('attachBtn').onclick = ()=>{
+  if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال مرفقات، فقط قالب 📋'); return; }
+  $('fileInput').click();
+};
+$('fileInput').addEventListener('change', async ()=>{
+  const file = $('fileInput').files[0];
+  if(!file || !currentConv) return;
+  if(file.size > 15*1024*1024){ toast('الملف كبير — الحد 15MB'); $('fileInput').value=''; return; }
+  toast('جارٍ إرسال المرفق…');
+  try{
+    const fd = new FormData();
+    fd.append('attachments[]', file);
+    fd.append('message_type','outgoing');
+    const cap = inputEl.value.trim();
+    if(cap) fd.append('content', cap);
+    const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages', {
+      method:'POST', headers:{ 'api_access_token': TOKEN }, body: fd
+    });
+    if(!res.ok) throw 0;
+    inputEl.value=''; inputEl.style.height='auto';
+    toast('أُرسل المرفق ✓'); await refreshChat(true);
+  }catch(e){ toast('تعذّر إرسال المرفق'); }
+  finally{ $('fileInput').value=''; }
+});
 
 /* ---------- إرسال ---------- */
 let noteMode = false;
@@ -537,8 +579,43 @@ async function sendTemplate(tpl){
   }catch(e){ toast('تعذّر إرسال القالب'); }
 }
 
+/* ---------- جهة الاتصال: تعديل الاسم + الحظر ---------- */
+function contactOf(){ return currentConv?.meta?.sender || {}; }
+$('actEditContact').onclick = async ()=>{
+  closeSheets();
+  const c = contactOf();
+  if(!c.id){ toast('تعذّر تحديد جهة الاتصال'); return; }
+  const newName = prompt('اسم العميل (سيُحفظ في جهات الاتصال):', c.name || '');
+  if(newName===null) return;
+  const name = newName.trim();
+  if(!name){ toast('الاسم فارغ — لم يُحفظ'); return; }
+  try{
+    await api('/contacts/'+c.id, { method:'PUT', body: JSON.stringify({ name }) });
+    currentConv.meta.sender.name = name;
+    $('chatName').textContent = name;
+    toast('حُفظ الاسم ✓'); loadConversations(true);
+  }catch(e){ toast('تعذّر حفظ الاسم'); }
+};
+$('actBlock').onclick = async ()=>{
+  closeSheets();
+  const c = contactOf();
+  if(!c.id){ toast('تعذّر تحديد جهة الاتصال'); return; }
+  const blocked = !!c.blocked;
+  const q = blocked ? 'إلغاء حظر هذا العميل؟ ستصلكم رسائله من جديد.'
+                    : 'حظر هذا العميل؟ لن تصلكم رسائله بعد الآن.';
+  if(!confirm(q)) return;
+  try{
+    await api('/contacts/'+c.id, { method:'PUT', body: JSON.stringify({ blocked: !blocked }) });
+    currentConv.meta.sender.blocked = !blocked;
+    toast(!blocked ? 'تم حظر العميل 🚫' : 'أُلغي الحظر ✓');
+  }catch(e){ toast('تعذّر تنفيذ العملية'); }
+};
+
 /* ---------- الإجراءات ---------- */
-$('actionsBtn').onclick = ()=> openSheet('actionsSheet');
+$('actionsBtn').onclick = ()=>{
+  $('blockTxt').textContent = contactOf().blocked ? 'إلغاء حظر هذا العميل' : 'حظر هذا العميل';
+  openSheet('actionsSheet');
+};
 $('actAssignMe').onclick = async ()=>{
   closeSheets();
   try{ await api('/conversations/'+currentConv.id+'/assignments',{method:'POST',body:JSON.stringify({assignee_id: ME.id})});

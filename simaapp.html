@@ -61,6 +61,11 @@
   .tab.active{color:#fff;border-bottom-color:#fff}
   .tab .cnt{font-size:11px;background:rgba(255,255,255,.25);border-radius:10px;padding:1px 7px;margin-inline-start:4px}
 
+  /* ===== فلتر الصناديق ===== */
+  .inbox-bar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-line);overflow-x:auto;flex-shrink:0}
+  .inbox-chip{font-size:13px;padding:6px 14px;border-radius:16px;background:#F0F2F5;color:var(--wa-ink-2);white-space:nowrap;cursor:pointer;font-weight:600}
+  .inbox-chip.active{background:#D1F4E8;color:var(--wa-green-dark)}
+
   /* ===== قائمة المحادثات ===== */
   .conv-list{flex:1;overflow-y:auto;background:#fff}
   .conv{display:flex;gap:12px;padding:12px 14px;border-bottom:1px solid #F5F6F6;cursor:pointer;align-items:center}
@@ -166,6 +171,7 @@
       <div class="tab" data-tab="me">محادثاتي <span class="cnt" id="cntMe">0</span></div>
       <div class="tab" data-tab="unassigned">غير معيّن <span class="cnt" id="cntUn">0</span></div>
     </div>
+    <div class="inbox-bar" id="inboxBar"></div>
     <div class="conv-list" id="convList"><div class="spin"></div></div>
   </div>
 
@@ -240,6 +246,11 @@ const store = (()=> {
 let TOKEN = store.get('sima_token') || '';
 let ME = null;                 // {id, name}
 let currentTab = 'all';
+let currentInbox = 0;          // 0 = كل الصناديق
+let inboxesList = [];
+let convPage = 1;
+let convHasMore = true;
+let convLoading = false;
 let conversations = [];
 let currentConv = null;        // كائن المحادثة المفتوحة
 let allLabels = [];
@@ -301,20 +312,36 @@ $('tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin();
 $('logoutBtn').onclick = ()=>{ if(confirm('تسجيل الخروج؟')) logout(); };
 
 /* ---------- قائمة المحادثات ---------- */
-async function loadConversations(){
+async function loadConversations(reset=true){
+  if(convLoading) return;
+  convLoading = true;
   try{
+    if(reset){ convPage = 1; convHasMore = true; }
     const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
-    const data = await api('/conversations?status=open&assignee_type='+assigneeType+'&sort_by=latest');
-    conversations = data.data?.payload || [];
+    let url = '/conversations?status=open&assignee_type='+assigneeType+'&sort_by=latest&page='+convPage;
+    if(currentInbox) url += '&inbox_id='+currentInbox;
+    const data = await api(url);
+    const page = data.data?.payload || [];
+    conversations = reset ? page : conversations.concat(page);
+    convHasMore = page.length >= 25;
     const meta = data.data?.meta || {};
     $('cntAll').textContent = meta.all_count ?? '';
     $('cntMe').textContent = meta.mine_count ?? '';
     $('cntUn').textContent = meta.unassigned_count ?? '';
-    renderList();
+    renderList(!reset);
   }catch(e){ /* صمت أثناء الاستطلاع */ }
+  finally{ convLoading = false; }
 }
-function renderList(){
+/* تمرير لانهائي: جلب الصفحة التالية قرب نهاية القائمة */
+$('convList').addEventListener('scroll', ()=>{
   const el = $('convList');
+  if(convHasMore && !convLoading && el.scrollHeight - el.scrollTop - el.clientHeight < 300){
+    convPage++; loadConversations(false);
+  }
+});
+function renderList(append=false){
+  const el = $('convList');
+  const keepScroll = append ? el.scrollTop : 0;
   if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
   el.innerHTML = conversations.map(c=>{
     const s = c.meta?.sender || {};
@@ -334,20 +361,24 @@ function renderList(){
       + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtTime(c.timestamp)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '</div></div>';
-  }).join('');
+  }).join('') + (convHasMore ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
   el.querySelectorAll('.conv').forEach(d=> d.onclick = ()=> openConversation(+d.dataset.id));
+  if(append) el.scrollTop = keepScroll;
 }
 function startListPolling(){
   clearInterval(listTimer);
-  loadConversations();
-  listTimer = setInterval(loadConversations, POLL_LIST_MS);
+  loadConversations(true);
+  listTimer = setInterval(()=>{
+    // لا نعيد التحميل إن كانت الموظفة متعمقة في التمرير حتى لا نفقد موضعها
+    if($('convList').scrollTop < 120 && convPage === 1) loadConversations(true);
+  }, POLL_LIST_MS);
 }
 document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); currentTab = t.dataset.tab;
-  $('convList').innerHTML='<div class="spin"></div>'; loadConversations();
+  $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
 });
-$('refreshBtn').onclick = ()=>{ loadConversations(); toast('تم التحديث'); };
+$('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; loadConversations(true); toast('تم التحديث'); };
 
 /* ---------- فتح محادثة ---------- */
 async function openConversation(id){
@@ -433,10 +464,21 @@ async function sendMessage(){
 async function loadInboxes(){
   try{
     const data = await api('/inboxes');
-    for(const ib of (data.payload||[])){
+    inboxesList = data.payload || [];
+    for(const ib of inboxesList){
       if(ib.message_templates?.length) inboxTemplates[ib.id] = ib.message_templates;
     }
+    renderInboxBar();
   }catch(e){}
+}
+function renderInboxBar(){
+  const bar = $('inboxBar');
+  const chips = [{id:0, name:'كل الصناديق'}].concat(inboxesList.map(i=>({id:i.id, name:i.name})));
+  bar.innerHTML = chips.map(c=>'<div class="inbox-chip'+(currentInbox===c.id?' active':'')+'" data-id="'+c.id+'">'+esc(c.name)+'</div>').join('');
+  bar.querySelectorAll('.inbox-chip').forEach(ch=> ch.onclick = ()=>{
+    currentInbox = +ch.dataset.id; renderInboxBar();
+    $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
+  });
 }
 $('tplBtn').onclick = async ()=>{
   openSheet('tplSheet');

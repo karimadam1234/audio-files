@@ -264,6 +264,13 @@ const $ = id => document.getElementById(id);
 const esc = s => (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function fmtTime(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleTimeString('ar-MA',{hour:'2-digit',minute:'2-digit'}); }
+/* توقيت قائمة المحادثات: اليوم = الساعة، وما قبله = التاريخ */
+function fmtListTime(ts){
+  if(!ts) return '';
+  const d=new Date(ts*1000), now=new Date();
+  if(d.toDateString()===now.toDateString()) return fmtTime(ts);
+  return d.toLocaleDateString('ar-MA',{day:'2-digit',month:'2-digit',year:'2-digit'});
+}
 function fmtDay(ts){ const d=new Date(ts*1000), now=new Date(); const dd=(a,b)=>a.toDateString()===b.toDateString();
   if(dd(d,now)) return 'اليوم';
   const y=new Date(now); y.setDate(y.getDate()-1); if(dd(d,y)) return 'أمس';
@@ -364,7 +371,7 @@ function renderList(append=false){
       + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
       + (chips?'<div class="chips">'+chips+'</div>':'')
       + '</div>'
-      + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtTime(c.timestamp)+'</div>'
+      + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(c.timestamp)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '</div></div>';
   }).join('') + (convHasMore ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');

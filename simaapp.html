@@ -265,6 +265,11 @@
     <div class="row" id="msgDelete" style="color:var(--wa-danger)"><div class="ic">🗑</div> حذف الرسالة (من النظام فقط)</div>
   </div>
 
+  <div class="sheet" id="filterLabelSheet">
+    <h3>فلترة حسب الوسم</h3>
+    <div id="filterLabelList"></div>
+  </div>
+
   <div class="toast" id="toast"></div>
 </div>
 
@@ -470,15 +475,29 @@ function renderList(append=false){
 document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
   const f = ch.dataset.f;
   if(f==='label'){
-    // منتقي وسم سريع
     if(!allLabels.length){ toast('لا توجد وسوم بعد'); return; }
-    const names = allLabels.map((l,i)=>(i+1)+'. '+l.title).join('\n');
-    const pick = prompt('اكتبي رقم الوسم:\n'+names);
-    const idx = parseInt(pick,10)-1;
-    if(isNaN(idx) || !allLabels[idx]) return;
-    filterLabel = allLabels[idx].title;
-    ch.textContent = '🏷 '+filterLabel;
-  } else { filterLabel=null; document.querySelector('.f-chip[data-f="label"]').textContent='🏷 الوسوم'; }
+    // ورقة اختيار بالنقر
+    $('filterLabelList').innerHTML = allLabels.map(l=>
+      '<div class="row" data-lt="'+esc(l.title)+'"><span class="lbl-dot" style="background:'+l.color+'"></span> '+esc(l.title)+'</div>'
+    ).join('') + '<div class="row" data-lt=""><div class="ic">✕</div> إلغاء فلتر الوسم</div>';
+    $('filterLabelList').querySelectorAll('.row').forEach(r=> r.onclick = ()=>{
+      closeSheets();
+      const t = r.dataset.lt;
+      const chip = document.querySelector('.f-chip[data-f="label"]');
+      if(!t){ filterLabel=null; chip.textContent='🏷 الوسوم'; currentFilter='all';
+        document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
+        document.querySelector('.f-chip[data-f="all"]').classList.add('active');
+        renderList(); return; }
+      filterLabel = t; chip.textContent = '🏷 '+t;
+      currentFilter = 'label';
+      document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
+      chip.classList.add('active');
+      renderList(); fillForFilter();
+    });
+    openSheet('filterLabelSheet');
+    return;
+  }
+  filterLabel=null; document.querySelector('.f-chip[data-f="label"]').textContent='🏷 الوسوم';
   currentFilter = f;
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');

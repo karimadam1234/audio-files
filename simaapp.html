@@ -339,13 +339,27 @@ async function tryLogin(){
     const res = await fetch(BASE + '/api/v1/profile', { headers:{'api_access_token':TOKEN} });
     if(!res.ok) throw 0;
     const p = await res.json();
-    ME = { id: p.id, name: p.name };
+    const acc = (p.accounts||[]).find(a=>a.id===ACCOUNT_ID) || {};
+    ME = { id: p.id, name: p.name, role: acc.role || 'agent' };
     store.set('sima_token', TOKEN);
+    applyRoleUI();
     show('listScreen'); startListPolling(); loadLabels(); loadInboxes();
   }catch(e){
     $('loginError').textContent='رمز غير صحيح أو تعذّر الاتصال بالخادم';
   }finally{ $('loginBtn').textContent='دخول'; }
 }
+/* الوكيل يرى محادثاته + غير المعيّن فقط — المدير يرى الكل */
+function applyRoleUI(){
+  const isAdmin = ME?.role === 'administrator';
+  const allTab = document.querySelector('.tab[data-tab="all"]');
+  allTab.style.display = isAdmin ? '' : 'none';
+  if(!isAdmin){
+    currentTab = 'me';
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelector('.tab[data-tab="me"]').classList.add('active');
+  }
+}
+
 function logout(){
   store.del('sima_token'); TOKEN=''; ME=null;
   clearInterval(listTimer); clearInterval(chatTimer);

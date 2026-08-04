@@ -215,6 +215,7 @@
         <div class="title" id="chatName" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
         <div class="sub" id="chatPhone" style="direction:ltr;text-align:right">—</div>
       </div>
+      <button class="icon-btn" id="callBtn" title="اتصال هاتفي بالعميل">📞</button>
       <button class="icon-btn" id="actionsBtn" title="إجراءات">⋮</button>
     </div>
     <div class="window-banner" id="windowBanner" style="display:none">⏱ نافذة الـ24 ساعة مغلقة — <b>الرد متاح عبر قالب فقط</b></div>
@@ -272,6 +273,13 @@
     <div id="filterLabelList"></div>
   </div>
 
+  <div class="sheet" id="convSheet">
+    <h3 id="convSheetTitle">خيارات المحادثة</h3>
+    <div class="row" id="convPin"><div class="ic">📌</div> <span id="pinTxt">تثبيت في الأعلى</span></div>
+    <div class="row" id="convFav"><div class="ic">⭐</div> <span id="favTxt">إضافة للمفضلة</span></div>
+    <div class="row" id="convResolve" style="color:var(--wa-danger)"><div class="ic">🗑</div> حذف من القائمة (حل المحادثة)</div>
+  </div>
+
   <div class="toast" id="toast"></div>
 </div>
 
@@ -311,6 +319,8 @@ let currentFilter = 'all';        // all | unread | fav | label
 let filterLabel = null;           // اسم الوسم المختار عند فلتر label
 const favs = new Set(JSON.parse(store.get('sima_favs')||'[]'));
 function saveFavs(){ store.set('sima_favs', JSON.stringify([...favs])); }
+const pins = new Set(JSON.parse(store.get('sima_pins')||'[]'));
+function savePins(){ store.set('sima_pins', JSON.stringify([...pins])); }
 let currentConv = null;        // كائن المحادثة المفتوحة
 let allLabels = [];
 let inboxTemplates = {};       // inbox_id -> [templates]
@@ -440,7 +450,9 @@ function renderList(append=false){
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }
   const sorted = pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
-  el.innerHTML = sorted.map(c=>{
+  // المثبتة تتصدر كل شيء
+  const finalList = sorted.filter(c=>pins.has(c.id)).concat(sorted.filter(c=>!pins.has(c.id)));
+  el.innerHTML = finalList.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
     const lm = c.last_non_activity_message;
@@ -454,7 +466,7 @@ function renderList(append=false){
     const waiting = awaits(c);
     return '<div class="conv'+(waiting?' waiting':'')+'" data-id="'+c.id+'">'
       + '<div class="avatar" style="background:'+avatarColor(name)+'">'+esc(initials(name))+'</div>'
-      + '<div class="conv-mid"><div class="conv-name">'+esc(name)+(waiting?' <span class="wait-tag">بانتظار الرد</span>':'')+'</div>'
+      + '<div class="conv-mid"><div class="conv-name">'+(pins.has(c.id)?'📌 ':'')+esc(name)+(waiting?' <span class="wait-tag">بانتظار الرد</span>':'')+'</div>'
       + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
       + (chips?'<div class="chips">'+chips+'</div>':'')
       + '</div>'
@@ -463,7 +475,22 @@ function renderList(append=false){
       + '<span class="fav-star'+(favs.has(c.id)?' on':'')+'" data-fav="'+c.id+'">⭐</span>'
       + '</div></div>';
   }).join('') + (convHasMore && currentFilter==='all' ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
-  el.querySelectorAll('.conv').forEach(d=> d.onclick = ()=> openConversation(+d.dataset.id));
+  el.querySelectorAll('.conv').forEach(d=>{
+    d.onclick = ()=> openConversation(+d.dataset.id);
+    const openConvSheet = ()=>{
+      selConvId = +d.dataset.id;
+      const c = conversations.find(x=>x.id===selConvId);
+      $('convSheetTitle').textContent = c?.meta?.sender?.name || 'خيارات المحادثة';
+      $('pinTxt').textContent = pins.has(selConvId) ? 'إلغاء التثبيت' : 'تثبيت في الأعلى';
+      $('favTxt').textContent = favs.has(selConvId) ? 'إزالة من المفضلة' : 'إضافة للمفضلة';
+      openSheet('convSheet');
+    };
+    d.addEventListener('contextmenu', e=>{ e.preventDefault(); openConvSheet(); });
+    let cpt=null;
+    d.addEventListener('touchstart', ()=>{ cpt=setTimeout(openConvSheet,550); }, {passive:true});
+    d.addEventListener('touchend', ()=>clearTimeout(cpt));
+    d.addEventListener('touchmove', ()=>clearTimeout(cpt));
+  });
   el.querySelectorAll('.fav-star').forEach(st=> st.onclick = e=>{
     e.stopPropagation();
     const id=+st.dataset.fav;
@@ -785,6 +812,29 @@ async function openContactConversation(contactId){
   }catch(e){ toast('تعذّر فتح المحادثة'); }
 }
 
+/* ---------- خيارات صف المحادثة (تثبيت/مفضلة/حل) ---------- */
+let selConvId = null;
+$('convPin').onclick = ()=>{
+  closeSheets();
+  pins.has(selConvId) ? pins.delete(selConvId) : pins.add(selConvId);
+  savePins(); renderList();
+  toast(pins.has(selConvId) ? 'ثُبتت في الأعلى 📌' : 'أُلغي التثبيت');
+};
+$('convFav').onclick = ()=>{
+  closeSheets();
+  favs.has(selConvId) ? favs.delete(selConvId) : favs.add(selConvId);
+  saveFavs(); renderList();
+  toast(favs.has(selConvId) ? 'أُضيفت للمفضلة ⭐' : 'أُزيلت من المفضلة');
+};
+$('convResolve').onclick = async ()=>{
+  closeSheets();
+  if(!confirm('حل المحادثة وإخفاؤها من قائمة «فتح»؟\n(لا تُحذف نهائياً — تعود تلقائياً إن راسل العميل مجدداً)')) return;
+  try{
+    await api('/conversations/'+selConvId+'/toggle_status',{method:'POST'});
+    toast('حُلّت المحادثة ✓'); loadConversations(true);
+  }catch(e){ toast('تعذّر تنفيذ العملية'); }
+};
+
 /* ---------- خيارات الرسالة (نسخ/مشاركة/حذف) ---------- */
 let lastMsgs=[], selMsg=null, pressTimer=null;
 function bindMsgActions(){
@@ -854,6 +904,12 @@ $('actBlock').onclick = async ()=>{
     currentConv.meta.sender.blocked = !blocked;
     toast(!blocked ? 'تم حظر العميل 🚫' : 'أُلغي الحظر ✓');
   }catch(e){ toast('تعذّر تنفيذ العملية'); }
+};
+
+$('callBtn').onclick = ()=>{
+  const ph = contactOf().phone_number;
+  if(!ph){ toast('لا يوجد رقم لهذا العميل'); return; }
+  location.href = 'tel:' + ph;   // اتصال هاتفي عادي من جهاز الموظفة
 };
 
 /* ---------- الإجراءات ---------- */

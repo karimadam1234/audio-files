@@ -368,6 +368,7 @@ function applyRoleUI(){
   const isAdmin = ME?.role === 'administrator';
   const allTab = document.querySelector('.tab[data-tab="all"]');
   allTab.style.display = isAdmin ? '' : 'none';
+  $('inboxBar').style.display = isAdmin ? '' : 'none';   // شريط الصناديق/الفرز للمدير فقط
   if(!isAdmin){
     currentTab = 'me';
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -412,6 +413,14 @@ $('convList').addEventListener('scroll', ()=>{
     convPage++; loadConversations(false);
   }
 });
+/* عند تفعيل فلتر محلي (غير مقروءة/مفضلة/وسم): املأ تلقائياً حتى تكتمل النتائج */
+async function fillForFilter(){
+  let guard = 0;
+  while(convHasMore && !convLoading && guard < 20){
+    guard++; convPage++;
+    await loadConversations(false);
+  }
+}
 function renderList(append=false){
   const el = $('convList');
   const keepScroll = append ? el.scrollTop : 0;
@@ -446,7 +455,7 @@ function renderList(append=false){
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '<span class="fav-star'+(favs.has(c.id)?' on':'')+'" data-fav="'+c.id+'">⭐</span>'
       + '</div></div>';
-  }).join('') + (convHasMore ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
+  }).join('') + (convHasMore && currentFilter==='all' ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
   el.querySelectorAll('.conv').forEach(d=> d.onclick = ()=> openConversation(+d.dataset.id));
   el.querySelectorAll('.fav-star').forEach(st=> st.onclick = e=>{
     e.stopPropagation();
@@ -474,6 +483,7 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');
   renderList();
+  if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
 });
 function startListPolling(){
   clearInterval(listTimer);

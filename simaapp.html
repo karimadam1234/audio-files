@@ -69,6 +69,11 @@
   .search-row{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-line);flex-shrink:0}
   .search-row input{flex:1;padding:10px 14px;border:1.5px solid var(--wa-line);border-radius:20px;font-size:14.5px}
   .search-row input:focus{outline:none;border-color:var(--wa-green)}
+  .filter-bar{display:flex;gap:8px;padding:8px 12px;background:#fff;border-bottom:1px solid var(--wa-line);overflow-x:auto;flex-shrink:0}
+  .f-chip{font-size:13px;padding:6px 14px;border-radius:16px;background:#F0F2F5;color:var(--wa-ink-2);white-space:nowrap;cursor:pointer;font-weight:600;border:1.5px solid transparent}
+  .f-chip.active{background:#D1F4E8;color:var(--wa-green-dark);border-color:var(--wa-green)}
+  .fav-star{cursor:pointer;font-size:16px;line-height:1;opacity:.35}
+  .fav-star.on{opacity:1}
 
   /* ===== قائمة المحادثات ===== */
   .conv-list{flex:1;overflow-y:auto;background:#fff}
@@ -191,6 +196,12 @@
       <div class="tab" data-tab="unassigned">غير معيّن <span class="cnt" id="cntUn">0</span></div>
     </div>
     <div class="inbox-bar" id="inboxBar"></div>
+    <div class="filter-bar" id="filterBar">
+      <div class="f-chip active" data-f="all">الكل</div>
+      <div class="f-chip" data-f="unread">غير مقروءة</div>
+      <div class="f-chip" data-f="fav">⭐ المفضلة</div>
+      <div class="f-chip" data-f="label">🏷 الوسوم</div>
+    </div>
     <div class="conv-list" id="convList"><div class="spin"></div></div>
   </div>
 
@@ -289,6 +300,10 @@ let convPage = 1;
 let convHasMore = true;
 let convLoading = false;
 let conversations = [];
+let currentFilter = 'all';        // all | unread | fav | label
+let filterLabel = null;           // اسم الوسم المختار عند فلتر label
+const favs = new Set(JSON.parse(store.get('sima_favs')||'[]'));
+function saveFavs(){ store.set('sima_favs', JSON.stringify([...favs])); }
 let currentConv = null;        // كائن المحادثة المفتوحة
 let allLabels = [];
 let inboxTemplates = {};       // inbox_id -> [templates]
@@ -403,7 +418,12 @@ function renderList(append=false){
   if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
   // بانتظار الرد أولاً: آخر رسالة فعلية من العميل (وارد) تتصدر القائمة
   const awaits = c => c.last_non_activity_message?.message_type === 0;
-  const sorted = conversations.filter(awaits).concat(conversations.filter(c=>!awaits(c)));
+  let pool = conversations;
+  if(currentFilter==='unread') pool = pool.filter(c=>(c.unread_count||0)>0);
+  else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
+  else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
+  if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }
+  const sorted = pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
   el.innerHTML = sorted.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
@@ -424,11 +444,37 @@ function renderList(append=false){
       + '</div>'
       + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(ts)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
+      + '<span class="fav-star'+(favs.has(c.id)?' on':'')+'" data-fav="'+c.id+'">⭐</span>'
       + '</div></div>';
   }).join('') + (convHasMore ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
   el.querySelectorAll('.conv').forEach(d=> d.onclick = ()=> openConversation(+d.dataset.id));
+  el.querySelectorAll('.fav-star').forEach(st=> st.onclick = e=>{
+    e.stopPropagation();
+    const id=+st.dataset.fav;
+    favs.has(id) ? favs.delete(id) : favs.add(id);
+    saveFavs(); st.classList.toggle('on');
+    if(currentFilter==='fav') renderList(append);
+  });
   if(append) el.scrollTop = keepScroll;
 }
+/* شريط الفلاتر (خاص بنطاق الموظفة الحالي فقط) */
+document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
+  const f = ch.dataset.f;
+  if(f==='label'){
+    // منتقي وسم سريع
+    if(!allLabels.length){ toast('لا توجد وسوم بعد'); return; }
+    const names = allLabels.map((l,i)=>(i+1)+'. '+l.title).join('\n');
+    const pick = prompt('اكتبي رقم الوسم:\n'+names);
+    const idx = parseInt(pick,10)-1;
+    if(isNaN(idx) || !allLabels[idx]) return;
+    filterLabel = allLabels[idx].title;
+    ch.textContent = '🏷 '+filterLabel;
+  } else { filterLabel=null; document.querySelector('.f-chip[data-f="label"]').textContent='🏷 الوسوم'; }
+  currentFilter = f;
+  document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
+  ch.classList.add('active');
+  renderList();
+});
 function startListPolling(){
   clearInterval(listTimer);
   loadConversations(true);

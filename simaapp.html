@@ -285,8 +285,10 @@
 
 <script>
 /* =========================================================
-   Sima Chat v1.0 — تطبيق وكلاء مخصص فوق Chatwoot API
+   Sima Chat v1.1 — تطبيق وكلاء مخصص فوق Chatwoot API
    يعمل على نفس نطاق الخادم (same-origin) بلا مشاكل CORS
+   v1.1: (1) تصفير «غير مقروءة» عند فتح المحادثة (update_last_seen)
+         (2) زر الرجوع في الهاتف يتنقل داخل التطبيق (History API)
    ========================================================= */
 const ACCOUNT_ID = 2;
 const BASE = location.origin;           // https://chat.simaconfection.com
@@ -358,9 +360,26 @@ async function api(path, opts={}){
 
 /* ---------- شاشات ---------- */
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); $(id).classList.add('active'); }
-function closeSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); $('sheetMask').classList.remove('open'); }
-function openSheet(id){ closeSheets(); $('sheetMask').classList.add('open'); $(id).classList.add('open'); }
+/* --- الأوراق السفلية مع دعم زر الرجوع --- */
+function sheetIsOpen(){ return $('sheetMask').classList.contains('open'); }
+function closeSheetsRaw(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); $('sheetMask').classList.remove('open'); }
+function closeSheets(){
+  if(sheetIsOpen() && history.state && history.state.s==='sheet'){ history.back(); }
+  else closeSheetsRaw();
+}
+function openSheet(id){
+  const was = sheetIsOpen();
+  closeSheetsRaw();
+  $('sheetMask').classList.add('open'); $(id).classList.add('open');
+  if(!was) history.pushState({s:'sheet'}, '');   // خطوة رجوع لإغلاق الورقة
+}
 $('sheetMask').onclick = closeSheets;
+
+/* --- زر الرجوع (الهاتف/المتصفح): يغلق الورقة أو يعود لقائمة المحادثات --- */
+window.addEventListener('popstate', ()=>{
+  if(sheetIsOpen()){ closeSheetsRaw(); return; }
+  if($('chatScreen').classList.contains('active')) goList();
+});
 
 /* ---------- دخول ---------- */
 async function tryLogin(){
@@ -549,18 +568,31 @@ document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
 $('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; loadConversations(true); toast('تم التحديث'); };
 
 /* ---------- فتح محادثة ---------- */
+/* إخبار الخادم أن الموظفة اطلعت على المحادثة — يصفّر عداد «غير مقروءة» */
+let lastSeenInMsgId = 0;
+async function markSeen(id){
+  try{ await api('/conversations/'+id+'/update_last_seen', {method:'POST'}); }catch(e){}
+}
 async function openConversation(id){
   currentConv = conversations.find(c=>c.id===id) || {id};
   const s = currentConv.meta?.sender || {};
   $('chatName').textContent = s.name || 'محادثة #'+id;
   $('chatPhone').textContent = s.phone_number || '';
   $('chatBody').innerHTML = '<div class="spin"></div>';
+  // تصفير الشارة محلياً فوراً + خطوة رجوع للعودة إلى القائمة بزر الهاتف
+  const c0 = conversations.find(c=>c.id===id); if(c0) c0.unread_count = 0;
+  lastSeenInMsgId = 0;
+  if(!(history.state && history.state.s==='chat')) history.pushState({s:'chat'}, '');
   show('chatScreen');
   await refreshChat(true);
   clearInterval(chatTimer);
   chatTimer = setInterval(()=>refreshChat(false), POLL_CHAT_MS);
 }
-$('backBtn').onclick = ()=>{ clearInterval(chatTimer); currentConv=null; show('listScreen'); loadConversations(); };
+function goList(){ clearInterval(chatTimer); currentConv=null; show('listScreen'); loadConversations(); }
+$('backBtn').onclick = ()=>{
+  if(history.state && history.state.s==='chat') history.back();  // popstate ينفّذ goList
+  else goList();
+};
 
 async function refreshChat(scrollToEnd){
   if(!currentConv) return;
@@ -575,7 +607,14 @@ async function refreshChat(scrollToEnd){
     $('resolveTxt').textContent = (convData.status==='resolved') ? 'إعادة فتح المحادثة' : 'حل المحادثة (إغلاق)';
 
     const msgs = await api('/conversations/'+currentConv.id+'/messages');
-    renderMessages(msgs.payload || [], scrollToEnd);
+    const payload = msgs.payload || [];
+    // كل رسالة واردة جديدة أثناء فتح المحادثة → تحديث «آخر اطلاع» في الخادم
+    const lastIn = [...payload].reverse().find(m=>m.message_type===0);
+    if(lastIn && lastIn.id !== lastSeenInMsgId){
+      lastSeenInMsgId = lastIn.id;
+      markSeen(currentConv.id);
+    }
+    renderMessages(payload, scrollToEnd);
   }catch(e){ /* صمت */ }
 }
 function renderMessages(msgs, forceScroll){

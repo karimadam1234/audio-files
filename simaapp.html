@@ -291,6 +291,9 @@
          (2) زر الرجوع في الهاتف يتنقل داخل التطبيق (History API)
    v1.2: (3) إصلاح توقف التحديث التلقائي بعد التمرير في القائمة
          (4) تحديث فوري عند العودة للتطبيق (مزامنة القراءة بين الأجهزة)
+   v1.3: (5) استقرار فلاتر «غير مقروءة/المفضلة/الوسوم»: تحميل كل الصفحات،
+             والحفاظ على القائمة عند فتح محادثة والعودة، وإيقاف
+             إعادة التعيين الدورية أثناء الفلترة
    ========================================================= */
 const ACCOUNT_ID = 2;
 const BASE = location.origin;           // https://chat.simaconfection.com
@@ -454,10 +457,15 @@ $('convList').addEventListener('scroll', ()=>{
 /* عند تفعيل فلتر محلي (غير مقروءة/مفضلة/وسم): املأ تلقائياً حتى تكتمل النتائج */
 async function fillForFilter(){
   let guard = 0;
-  while(convHasMore && !convLoading && guard < 20){
+  while(convHasMore && !convLoading && guard < 40){
     guard++; convPage++;
     await loadConversations(false);
   }
+}
+/* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر نشط تُجلب كل الصفحات */
+async function reloadForCurrentView(){
+  await loadConversations(true);
+  if(currentFilter !== 'all') await fillForFilter();
 }
 function renderList(append=false){
   const el = $('convList');
@@ -558,9 +566,9 @@ function startListPolling(){
   clearInterval(listTimer);
   loadConversations(true);
   listTimer = setInterval(()=>{
-    // لا نعيد التحميل إن كانت الموظفة متعمقة في التمرير (حفاظاً على موضعها)
-    // أو أثناء بحث نشط — أما قرب الأعلى فالتحديث يعمل دائماً
-    if($('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
+    // التحديث الدوري في وضع «الكل» فقط — الفلاتر المحلية تبقى ثابتة حتى لا تتقلب القائمة
+    // ولا تحديث أثناء التمرير العميق أو البحث النشط
+    if(currentFilter==='all' && $('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
   }, POLL_LIST_MS);
 }
 /* عند العودة للتطبيق (فتح الهاتف/التبويب من جديد): تحديث فوري بدل عرض بيانات قديمة */
@@ -568,7 +576,7 @@ function refreshOnReturn(){
   if(!TOKEN || !ME) return;
   if($('chatScreen').classList.contains('active')) refreshChat(false);
   else if($('listScreen').classList.contains('active') && !$('searchInput').value.trim()){
-    if($('convList').scrollTop < 120) loadConversations(true);
+    if($('convList').scrollTop < 120) reloadForCurrentView();
   }
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') refreshOnReturn(); });
@@ -576,9 +584,9 @@ window.addEventListener('pageshow', e=>{ if(e.persisted) refreshOnReturn(); });
 document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); currentTab = t.dataset.tab;
-  $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
+  $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
 });
-$('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; loadConversations(true); toast('تم التحديث'); };
+$('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; reloadForCurrentView(); toast('تم التحديث'); };
 
 /* ---------- فتح محادثة ---------- */
 /* إخبار الخادم أن الموظفة اطلعت على المحادثة — يصفّر عداد «غير مقروءة» */
@@ -601,7 +609,11 @@ async function openConversation(id){
   clearInterval(chatTimer);
   chatTimer = setInterval(()=>refreshChat(false), POLL_CHAT_MS);
 }
-function goList(){ clearInterval(chatTimer); currentConv=null; show('listScreen'); loadConversations(); }
+function goList(){
+  clearInterval(chatTimer); currentConv=null; show('listScreen');
+  if(currentFilter === 'all') loadConversations();
+  else renderList();   // فلتر نشط: تحديث محلي فقط — المحادثة المقروءة تختفي والباقي يبقى
+}
 $('backBtn').onclick = ()=>{
   if(history.state && history.state.s==='chat') history.back();  // popstate ينفّذ goList
   else goList();
@@ -782,11 +794,11 @@ function renderInboxBar(){
   $('sortChip').onclick = ()=>{
     currentSort = currentSort==='waiting_since' ? 'latest' : 'waiting_since';
     renderInboxBar();
-    $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
+    $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
   };
   bar.querySelectorAll('.inbox-chip[data-id]').forEach(ch=> ch.onclick = ()=>{
     currentInbox = +ch.dataset.id; renderInboxBar();
-    $('convList').innerHTML='<div class="spin"></div>'; loadConversations(true);
+    $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
   });
 }
 $('tplBtn').onclick = async ()=>{

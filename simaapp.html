@@ -289,6 +289,8 @@
    يعمل على نفس نطاق الخادم (same-origin) بلا مشاكل CORS
    v1.1: (1) تصفير «غير مقروءة» عند فتح المحادثة (update_last_seen)
          (2) زر الرجوع في الهاتف يتنقل داخل التطبيق (History API)
+   v1.2: (3) إصلاح توقف التحديث التلقائي بعد التمرير في القائمة
+         (4) تحديث فوري عند العودة للتطبيق (مزامنة القراءة بين الأجهزة)
    ========================================================= */
 const ACCOUNT_ID = 2;
 const BASE = location.origin;           // https://chat.simaconfection.com
@@ -556,10 +558,21 @@ function startListPolling(){
   clearInterval(listTimer);
   loadConversations(true);
   listTimer = setInterval(()=>{
-    // لا نعيد التحميل إن كانت الموظفة متعمقة في التمرير حتى لا نفقد موضعها
-    if($('convList').scrollTop < 120 && convPage === 1) loadConversations(true);
+    // لا نعيد التحميل إن كانت الموظفة متعمقة في التمرير (حفاظاً على موضعها)
+    // أو أثناء بحث نشط — أما قرب الأعلى فالتحديث يعمل دائماً
+    if($('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
   }, POLL_LIST_MS);
 }
+/* عند العودة للتطبيق (فتح الهاتف/التبويب من جديد): تحديث فوري بدل عرض بيانات قديمة */
+function refreshOnReturn(){
+  if(!TOKEN || !ME) return;
+  if($('chatScreen').classList.contains('active')) refreshChat(false);
+  else if($('listScreen').classList.contains('active') && !$('searchInput').value.trim()){
+    if($('convList').scrollTop < 120) loadConversations(true);
+  }
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') refreshOnReturn(); });
+window.addEventListener('pageshow', e=>{ if(e.persisted) refreshOnReturn(); });
 document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); currentTab = t.dataset.tab;
@@ -612,7 +625,7 @@ async function refreshChat(scrollToEnd){
     const lastIn = [...payload].reverse().find(m=>m.message_type===0);
     if(lastIn && lastIn.id !== lastSeenInMsgId){
       lastSeenInMsgId = lastIn.id;
-      markSeen(currentConv.id);
+      await markSeen(currentConv.id);   // ننتظر التأكيد حتى لا تعود الشارة عند الرجوع للقائمة
     }
     renderMessages(payload, scrollToEnd);
   }catch(e){ /* صمت */ }

@@ -112,6 +112,8 @@
   .msg .note-tag{font-size:10.5px;color:#8A6D00;font-weight:700;margin-bottom:2px}
   .msg.activity{align-self:center;background:#FDF3D7;color:#6b5d1f;font-size:12px;padding:5px 12px;border-radius:8px;box-shadow:none;max-width:92%;text-align:center}
   .ticks{color:#53BDEB;font-size:12px}
+  .msg a.msg-link{color:#027EB5;text-decoration:underline;word-break:break-all}
+  .msg.out a.msg-link{color:#056162}
   .att-img{max-width:100%;max-height:280px;border-radius:8px;display:block;margin-bottom:4px}
   .att-file{display:inline-block;background:#F0F2F5;color:var(--wa-green-dark);padding:8px 12px;border-radius:8px;font-size:13.5px;font-weight:600;text-decoration:none;margin-bottom:4px}
   .rec-bar{display:flex;align-items:center;gap:10px;background:#fff;margin:0 10px 8px;padding:10px 14px;border-radius:24px;box-shadow:0 1px 2px rgba(0,0,0,.12);font-size:14px;color:var(--wa-danger);font-weight:700;flex-shrink:0}
@@ -319,6 +321,8 @@ bitsperframe:             %d
              الرسم الدورية تدمّر المشغّل أثناء التشغيل)
          (9) علامات الحالة الحقيقية: ✓ أُرسلت | ✓✓ وصلت | ✓✓ زرقاء قُرئت
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
+   v1.6: (10) الروابط في الرسائل قابلة للنقر (تُفتح في تبويب/متصفح خارجي)
+              مع بقاء الحماية من حقن HTML
    ========================================================= */
 const ACCOUNT_ID = 2;
 const BASE = location.origin;           // https://chat.simaconfection.com
@@ -374,6 +378,18 @@ function fmtDay(ts){ const d=new Date(ts*1000), now=new Date(); const dd=(a,b)=>
   if(dd(d,now)) return 'اليوم';
   const y=new Date(now); y.setDate(y.getDate()-1); if(dd(d,y)) return 'أمس';
   return d.toLocaleDateString('ar-MA',{day:'numeric',month:'long'}); }
+/* تحويل الروابط في نص (مُهرَّب مسبقاً) إلى روابط قابلة للنقر — دون فتح باب حقن HTML */
+function linkify(escaped){
+  return escaped.replace(/(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g, m=>{
+    // لا نضم علامات الترقيم الختامية إلى الرابط
+    const trail = m.match(/[.,;:!؟?،؛…)\]»«]+$/);
+    let url = m, tail = '';
+    if(trail){ url = m.slice(0, m.length - trail[0].length); tail = trail[0]; }
+    if(!url) return m;
+    const href = url.startsWith('www.') ? 'https://' + url : url;
+    return '<a href="' + href + '" target="_blank" rel="noopener" class="msg-link">' + url + '</a>' + tail;
+  });
+}
 function initials(name){ return (name||'؟').trim().charAt(0).toUpperCase(); }
 function avatarColor(name){ const cs=['#6C8EBF','#B85450','#82B366','#9673A6','#D79B00','#5B9AA0']; let h=0; for(const c of (name||'')) h=(h*31+c.charCodeAt(0))>>>0; return cs[h%cs.length]; }
 
@@ -706,7 +722,7 @@ function renderMessages(msgs, forceScroll){
     html += '<div class="'+cls+'" data-mid="'+m.id+'">'
       + (m.private ? '<div class="note-tag">🗒 ملاحظة خاصة — لا يراها العميل</div>' : '')
       + att
-      + esc(m.content||'')
+      + linkify(esc(m.content||''))
       + '<div class="meta">'+fmtTime(m.created_at)+ticks+'</div>'
       + '</div>';
   }

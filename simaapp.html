@@ -294,6 +294,10 @@
    v1.3: (5) استقرار فلاتر «غير مقروءة/المفضلة/الوسوم»: تحميل كل الصفحات،
              والحفاظ على القائمة عند فتح محادثة والعودة، وإيقاف
              إعادة التعيين الدورية أثناء الفلترة
+   v1.4: (6) الرسائل الصوتية تُحوَّل إلى Ogg/Opus فتصل للعميل في واتساب
+             (كروم يسجّل WebM وواتساب يرفضه)
+         (7) حدود الأحجام حسب واتساب Cloud API: فيديو/صوت 16MB،
+             صورة 5MB، مستندات 100MB
    ========================================================= */
 const ACCOUNT_ID = 2;
 const BASE = location.origin;           // https://chat.simaconfection.com
@@ -679,10 +683,24 @@ $('attachBtn').onclick = ()=>{
   if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال مرفقات، فقط قالب 📋'); return; }
   $('fileInput').click();
 };
+/* حدود واتساب Cloud API لكل نوع (لا يمكن تجاوزها — حدود Meta نفسها) */
+const WA_LIMITS_MB = { image: 5, video: 16, audio: 16, other: 100 };
+const WA_TYPE_AR  = { image: 'الصورة', video: 'الفيديو', audio: 'الملف الصوتي', other: 'المستند' };
+function waCategory(f){
+  const t = f.type || '';
+  if(t.startsWith('image/')) return 'image';
+  if(t.startsWith('video/')) return 'video';
+  if(t.startsWith('audio/')) return 'audio';
+  return 'other';
+}
 $('fileInput').addEventListener('change', async ()=>{
   const file = $('fileInput').files[0];
   if(!file || !currentConv) return;
-  if(file.size > 15*1024*1024){ toast('الملف كبير — الحد 15MB'); $('fileInput').value=''; return; }
+  const cat = waCategory(file);
+  if(file.size > WA_LIMITS_MB[cat]*1024*1024){
+    toast('حجم '+WA_TYPE_AR[cat]+' الأقصى في واتساب '+WA_LIMITS_MB[cat]+'MB');
+    $('fileInput').value=''; return;
+  }
   toast('جارٍ إرسال المرفق…');
   try{
     const fd = new FormData();
@@ -700,12 +718,265 @@ $('fileInput').addEventListener('change', async ()=>{
   finally{ $('fileInput').value=''; }
 });
 
+/* ===== تحويل WebM/Opus إلى Ogg/Opus (متوافق مع واتساب) =====
+   لا يعيد ضغط الصوت — ينقل حزم Opus كما هي من حاوية WebM إلى حاوية Ogg */
+function webmOpusToOgg(buf){
+  const u8 = new Uint8Array(buf);
+  let pos = 0;
+  const end = u8.length;
+
+  /* ---------- قراءة EBML ---------- */
+  function vintLen(first){
+    let len = 1;
+    for(let m = 0x80; m; m >>= 1){ if(first & m) return len; len++; }
+    throw new Error('vint');
+  }
+  function readId(){
+    const len = vintLen(u8[pos]);
+    if(len > 4) throw new Error('id-len');
+    let val = 0;
+    for(let i = 0; i < len; i++) val = val * 256 + u8[pos + i];
+    pos += len;
+    return val;
+  }
+  function readSize(){
+    const len = vintLen(u8[pos]);
+    let val = u8[pos] & (0xFF >> len);
+    let allOnes = (val === (0xFF >> len));
+    for(let i = 1; i < len; i++){
+      val = val * 256 + u8[pos + i];
+      if(u8[pos + i] !== 0xFF) allOnes = false;
+    }
+    pos += len;
+    return allOnes ? -1 : val;          // -1 = حجم غير معروف (بث MediaRecorder)
+  }
+
+  const ID = {
+    EBML: 0x1A45DFA3, SEGMENT: 0x18538067, TRACKS: 0x1654AE6B, TRACKENTRY: 0xAE,
+    TRACKNUM: 0xD7, CODECID: 0x86, CODECPRIV: 0x63A2,
+    CLUSTER: 0x1F43B675, TIMECODE: 0xE7, SIMPLEBLOCK: 0xA3,
+    BLOCKGROUP: 0xA0, BLOCK: 0xA1, VOID: 0xEC, CRC: 0xBF
+  };
+  const CLUSTER_KIDS = new Set([ID.TIMECODE, ID.SIMPLEBLOCK, ID.BLOCKGROUP, ID.VOID, ID.CRC, 0xAB]);
+  const GROUP_KIDS = new Set([ID.BLOCK, ID.VOID, ID.CRC, 0x9B, 0xFB, 0x75A2]);
+
+  let opusTrack = -1, codecPrivate = null;
+  const packets = [];
+
+  function parseTrackEntry(stop){
+    let num = -1, codec = '', priv = null;
+    while(pos < stop){
+      const id = readId(), sz = readSize();
+      if(sz < 0) throw new Error('unk-size-in-track');
+      if(id === ID.TRACKNUM){ let v = 0; for(let i = 0; i < sz; i++) v = v * 256 + u8[pos + i]; num = v; }
+      else if(id === ID.CODECID){ codec = String.fromCharCode.apply(null, u8.subarray(pos, pos + sz)); }
+      else if(id === ID.CODECPRIV){ priv = u8.slice(pos, pos + sz); }
+      pos += sz;
+    }
+    if(codec.indexOf('OPUS') >= 0 && opusTrack < 0){ opusTrack = num; codecPrivate = priv; }
+  }
+
+  function readLacedFrames(stop, flags){
+    const lacing = (flags >> 1) & 3;              // 0 لا شيء | 1 Xiph | 2 ثابت | 3 EBML
+    if(lacing === 0) return [u8.slice(pos, stop)];
+    const count = u8[pos++] + 1;
+    const sizes = [];
+    if(lacing === 2){                              // ثابت
+      const total = stop - pos;
+      const each = Math.floor(total / count);
+      for(let i = 0; i < count; i++) sizes.push(each);
+    } else if(lacing === 1){                       // Xiph
+      for(let i = 0; i < count - 1; i++){
+        let s = 0;
+        while(u8[pos] === 255){ s += 255; pos++; }
+        s += u8[pos++]; sizes.push(s);
+      }
+      sizes.push(-1);
+    } else {                                       // EBML
+      const len0 = vintLen(u8[pos]);
+      let v0 = u8[pos] & (0xFF >> len0);
+      for(let i = 1; i < len0; i++) v0 = v0 * 256 + u8[pos + i];
+      pos += len0; sizes.push(v0);
+      let prev = v0;
+      for(let i = 1; i < count - 1; i++){
+        const l = vintLen(u8[pos]);
+        let raw = u8[pos] & (0xFF >> l);
+        for(let j = 1; j < l; j++) raw = raw * 256 + u8[pos + j];
+        pos += l;
+        const delta = raw - (Math.pow(2, 7 * l - 1) - 1);
+        prev += delta; sizes.push(prev);
+      }
+      sizes.push(-1);
+    }
+    const frames = [];
+    for(let i = 0; i < count; i++){
+      const s = (sizes[i] === -1) ? (stop - pos) : sizes[i];
+      frames.push(u8.slice(pos, pos + s));
+      pos += s;
+    }
+    return frames;
+  }
+
+  function parseBlock(stop){
+    const tLen = vintLen(u8[pos]);
+    let track = u8[pos] & (0xFF >> tLen);
+    for(let i = 1; i < tLen; i++) track = track * 256 + u8[pos + i];
+    pos += tLen;
+    pos += 2;                                      // الطابع الزمني النسبي — غير مستخدم
+    const flags = u8[pos++];
+    const frames = readLacedFrames(stop, flags);
+    if(track === opusTrack || opusTrack < 0){
+      for(const f of frames) if(f.length) packets.push(f);
+    }
+    pos = stop;
+  }
+
+  function parseChildren(kids, stop){
+    // stop=-1: حاوية بحجم غير معروف — نتوقف عند أول عنصر ليس من أبنائها
+    for(;;){
+      if(stop >= 0 && pos >= stop) return;
+      if(pos >= end) return;
+      const save = pos;
+      let id, sz;
+      try{ id = readId(); sz = readSize(); }catch(e){ return; }
+      if(stop < 0 && kids && !kids.has(id)){ pos = save; return; }
+      const bodyEnd = (sz < 0) ? -1 : pos + sz;
+      if(id === ID.TRACKS){ parseChildren(new Set([ID.TRACKENTRY, ID.VOID, ID.CRC]), bodyEnd < 0 ? end : bodyEnd); }
+      else if(id === ID.TRACKENTRY){ parseTrackEntry(bodyEnd); }
+      else if(id === ID.CLUSTER){ parseChildren(CLUSTER_KIDS, bodyEnd); }
+      else if(id === ID.BLOCKGROUP){ parseChildren(GROUP_KIDS, bodyEnd); }
+      else if(id === ID.SIMPLEBLOCK || id === ID.BLOCK){ parseBlock(bodyEnd < 0 ? end : bodyEnd); }
+      else if(bodyEnd < 0){ /* حاوية غير معروفة بحجم غير معروف */ return; }
+      else { pos = bodyEnd; }
+    }
+  }
+
+  // الهيكل الأعلى: EBML header ثم Segment
+  {
+    const id = readId(), sz = readSize();
+    if(id !== ID.EBML) throw new Error('not-webm');
+    pos += sz;
+  }
+  {
+    const id = readId(); readSize();               // Segment (غالباً بحجم غير معروف)
+    if(id !== ID.SEGMENT) throw new Error('no-segment');
+    parseChildren(null, end);                      // أبناء Segment حتى نهاية الملف
+  }
+  if(!packets.length) throw new Error('no-opus-packets');
+
+  /* ---------- مدة كل حزمة Opus من بايت TOC (RFC 6716) ---------- */
+  function packetSamples(p){
+    const toc = p[0];
+    const config = toc >> 3;
+    let frameMs;
+    if(config < 12)      frameMs = [10, 20, 40, 60][config & 3];
+    else if(config < 16) frameMs = [10, 20][config & 1];
+    else                 frameMs = [2.5, 5, 10, 20][config & 3];
+    const c = toc & 3;
+    let n = 1;
+    if(c === 1 || c === 2) n = 2;
+    else if(c === 3) n = p[1] & 0x3F;
+    return Math.round(frameMs * 48) * n;           // عينات على 48kHz
+  }
+
+  /* ---------- كتابة Ogg ---------- */
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for(let i = 0; i < 256; i++){
+      let r = i << 24;
+      for(let j = 0; j < 8; j++) r = (r & 0x80000000) ? ((r << 1) ^ 0x04C11DB7) : (r << 1);
+      t[i] = r >>> 0;
+    }
+    return t;
+  })();
+  function crc32(bytes){
+    let crc = 0;
+    for(let i = 0; i < bytes.length; i++) crc = ((crc << 8) >>> 0) ^ CRC_TABLE[((crc >>> 24) ^ bytes[i]) & 0xFF];
+    return crc >>> 0;
+  }
+
+  const serial = 0x53494D41;                       // "SIMA"
+  let seq = 0;
+  const out = [];
+
+  function writePage(packetList, granule, headerType){
+    const segs = [];
+    let payloadLen = 0;
+    for(const p of packetList){
+      let rem = p.length;
+      for(;;){
+        if(rem >= 255){ segs.push(255); rem -= 255; }
+        else { segs.push(rem); break; }
+      }
+      payloadLen += p.length;
+    }
+    if(segs.length > 255) throw new Error('page-too-big');
+    const page = new Uint8Array(27 + segs.length + payloadLen);
+    const dv = new DataView(page.buffer);
+    page.set([0x4F, 0x67, 0x67, 0x53, 0], 0);      // "OggS" + الإصدار
+    page[5] = headerType;
+    const g = Math.max(0, Math.round(granule));
+    dv.setUint32(6, g >>> 0, true);
+    dv.setUint32(10, Math.floor(g / 4294967296), true);
+    dv.setUint32(14, serial, true);
+    dv.setUint32(18, seq++, true);
+    page[26] = segs.length;
+    page.set(segs, 27);
+    let o = 27 + segs.length;
+    for(const p of packetList){ page.set(p, o); o += p.length; }
+    dv.setUint32(22, crc32(page), true);           // CRC يُحسب والحقل صفر
+    out.push(page);
+  }
+
+  // OpusHead: من CodecPrivate إن وُجد وإلا نبنيه (قناة واحدة)
+  let head = codecPrivate;
+  if(!head || head.length < 19 || String.fromCharCode.apply(null, head.subarray(0, 8)) !== 'OpusHead'){
+    head = new Uint8Array(19);
+    head.set([0x4F,0x70,0x75,0x73,0x48,0x65,0x61,0x64, 1, 1]);   // "OpusHead", v1, ch1
+    new DataView(head.buffer).setUint16(10, 312, true);           // pre-skip
+    new DataView(head.buffer).setUint32(12, 48000, true);
+  }
+  const preskip = head[10] | (head[11] << 8);
+  writePage([head], 0, 0x02);                      // بداية البث
+
+  const tags = (() => {
+    const vendor = 'simachat';
+    const t = new Uint8Array(8 + 4 + vendor.length + 4);
+    t.set([0x4F,0x70,0x75,0x73,0x54,0x61,0x67,0x73]);
+    new DataView(t.buffer).setUint32(8, vendor.length, true);
+    for(let i = 0; i < vendor.length; i++) t[12 + i] = vendor.charCodeAt(i);
+    return t;
+  })();
+  writePage([tags], 0, 0);
+
+  let cum = 0, batch = [], batchSegs = 0;
+  for(let i = 0; i < packets.length; i++){
+    const p = packets[i];
+    const nSegs = Math.floor(p.length / 255) + 1;
+    if(batch.length && (batchSegs + nSegs > 250 || batchSegs > 100)){
+      writePage(batch, preskip + cum, 0);
+      batch = []; batchSegs = 0;
+    }
+    batch.push(p); batchSegs += nSegs;
+    cum += packetSamples(p);
+  }
+  if(batch.length) writePage(batch, preskip + cum, 0x04);   // نهاية البث
+  else if(out.length) out[out.length - 1][5] |= 0x04;
+
+  let total = 0;
+  for(const p of out) total += p.length;
+  const ogg = new Uint8Array(total);
+  let o = 0;
+  for(const p of out){ ogg.set(p, o); o += p.length; }
+  return ogg;
+}
+
 /* ---------- تسجيل رسالة صوتية 🎤 ---------- */
 let recStream=null, recorder=null, recChunks=[], recTimer=null, recSecs=0, recSendOnStop=false;
 $('micBtn').onclick = async ()=>{
   if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال صوت، فقط قالب 📋'); return; }
   try{
-    recStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    recStream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:{ideal:1}, echoCancellation:true, noiseSuppression:true}});
   }catch(e){ toast('تعذّر الوصول للميكروفون — تحققي من الإذن'); return; }
   const mime = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus'
              : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
@@ -718,12 +989,21 @@ $('micBtn').onclick = async ()=>{
     $('recBar').style.display='none'; $('composer').style.display='flex';
     if(!recSendOnStop || !recChunks.length) return;
     const type = recorder.mimeType || 'audio/webm';
-    const ext = type.includes('ogg') ? 'ogg' : 'webm';
-    const blob = new Blob(recChunks, {type});
+    let blob = new Blob(recChunks, {type});
+    // واتساب لا يقبل WebM — نحوّل إلى Ogg/Opus (نفس الصوت، حاوية متوافقة)
+    if(!type.includes('ogg')){
+      try{
+        const ogg = webmOpusToOgg(await blob.arrayBuffer());
+        blob = new Blob([ogg], {type: 'audio/ogg'});
+      }catch(e){
+        toast('تعذّر تجهيز التسجيل الصوتي — أعيدي المحاولة');
+        return;
+      }
+    }
     toast('جارٍ إرسال الرسالة الصوتية…');
     try{
       const fd = new FormData();
-      fd.append('attachments[]', blob, 'voice-'+Date.now()+'.'+ext);
+      fd.append('attachments[]', blob, 'voice-'+Date.now()+'.ogg');
       fd.append('message_type','outgoing');
       const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages',{
         method:'POST', headers:{'api_access_token':TOKEN}, body:fd

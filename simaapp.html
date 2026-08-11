@@ -632,10 +632,14 @@ $('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; reloadForCurrentView(
 /* ---------- فتح محادثة ---------- */
 /* إخبار الخادم أن الموظفة اطلعت على المحادثة — يصفّر عداد «غير مقروءة» */
 let lastSeenInMsgId = 0;
+let savedListScroll = 0;   // موضع التمرير في القائمة قبل فتح المحادثة — يُستعاد عند الرجوع
 async function markSeen(id){
   try{ await api('/conversations/'+id+'/update_last_seen', {method:'POST'}); }catch(e){}
 }
 async function openConversation(id){
+  // حفظ موضع التمرير قبل إخفاء القائمة (خارج وضع البحث)
+  if($('listScreen').classList.contains('active') && !$('searchInput').value.trim())
+    savedListScroll = $('convList').scrollTop;
   currentConv = conversations.find(c=>c.id===id) || {id};
   const s = currentConv.meta?.sender || {};
   $('chatName').textContent = s.name || 'محادثة #'+id;
@@ -652,8 +656,10 @@ async function openConversation(id){
 }
 function goList(){
   clearInterval(chatTimer); currentConv=null; show('listScreen');
-  if(currentFilter === 'all') loadConversations();
-  else renderList();   // فلتر نشط: تحديث محلي فقط — المحادثة المقروءة تختفي والباقي يبقى
+  renderList();   // رسم محلي يحافظ على كل الصفحات المحمّلة (لا إعادة تحميل تقفز للأعلى)
+  $('convList').scrollTop = savedListScroll;   // العودة لنفس موضع المحادثة التي دخلناها
+  // قرب أعلى القائمة فقط: تحديث خفيف من الخادم (لا يغيّر الموضع لأننا أصلاً في الأعلى)
+  if(currentFilter==='all' && savedListScroll < 120 && !$('searchInput').value.trim()) loadConversations();
 }
 $('backBtn').onclick = ()=>{
   if(history.state && history.state.s==='chat') history.back();  // popstate ينفّذ goList

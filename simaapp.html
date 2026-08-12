@@ -360,7 +360,8 @@ const store = (()=> {
 let TOKEN = store.get('sima_token') || '';
 let ME = null;                 // {id, name}
 let currentTab = 'all';
-let currentInbox = 0;          // 0 = كل الصناديق
+let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
+let agentsList = [];           // وكيلات الدعم — لشريط المراقبة
 let currentSort = 'waiting_since'; // الأقدم انتظاراً أولاً — أو 'latest' للأحدث نشاطاً
 let inboxesList = [];
 let convPage = 1;
@@ -457,6 +458,7 @@ async function tryLogin(){
     store.set('sima_token', TOKEN);
     applyRoleUI();
     show('listScreen'); startListPolling(); loadLabels(); loadInboxes();
+    if(ME.role === 'administrator') loadAgents();   // شريط المراقبة للمدير فقط
   }catch(e){
     $('loginError').textContent='رمز غير صحيح أو تعذّر الاتصال بالخادم';
   }finally{ $('loginBtn').textContent='دخول'; }
@@ -489,19 +491,28 @@ async function loadConversations(reset=true){
   convLoading = true;
   try{
     if(reset){ convPage = 1; convHasMore = true; }
-    const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
-    let url = '/conversations?status=open&assignee_type='+assigneeType+'&sort_by='+currentSort+'&page='+convPage;
-    if(currentInbox) url += '&inbox_id='+currentInbox;
-    const data = await api(url);
+    let data;
+    if(agentView){
+      // وضع مراقبة موظفة: جلب محادثاتها المسندة إليها عبر فلتر Chatwoot الرسمي
+      data = await api('/conversations/filter?page='+convPage, {
+        method: 'POST',
+        body: JSON.stringify({ payload: [{ attribute_key: 'assignee_id', filter_operator: 'equal_to', values: [agentView], query_operator: null }] })
+      });
+    }else{
+      const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
+      data = await api('/conversations?status=open&assignee_type='+assigneeType+'&sort_by='+currentSort+'&page='+convPage);
+    }
     // وصلت النتائج والموظفة داخل محادثة؟ تجاهلها — حتى لا تُمسح الصفحات المحمّلة ويضيع موضع التمرير عند الرجوع
     if($('chatScreen').classList.contains('active')) return;
-    const page = data.data?.payload || [];
+    const page = data.data?.payload || data.payload || [];
     conversations = reset ? page : conversations.concat(page);
     convHasMore = page.length >= 25;
-    const meta = data.data?.meta || {};
-    $('cntAll').textContent = meta.all_count ?? '';
-    $('cntMe').textContent = meta.mine_count ?? '';
-    $('cntUn').textContent = meta.unassigned_count ?? '';
+    const meta = data.data?.meta || data.meta || {};
+    if(!agentView){
+      $('cntAll').textContent = meta.all_count ?? '';
+      $('cntMe').textContent = meta.mine_count ?? '';
+      $('cntUn').textContent = meta.unassigned_count ?? '';
+    }
     renderList(!reset);
   }catch(e){ /* صمت أثناء الاستطلاع */ }
   finally{ convLoading = false; }
@@ -644,6 +655,7 @@ window.addEventListener('pageshow', e=>{ if(e.persisted) refreshOnReturn(); });
 document.querySelectorAll('.tab').forEach(t=> t.onclick = ()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active'); currentTab = t.dataset.tab;
+  if(agentView){ agentView = 0; renderAgentBar(); }   // النقر على أي تبويب يُنهي وضع المراقبة
   $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
 });
 $('refreshBtn').onclick = ()=>{ $('convList').scrollTop=0; reloadForCurrentView(); toast('تم التحديث'); };
@@ -956,7 +968,7 @@ async function sendMessage(){
   finally{ $('sendBtn').disabled = false; }
 }
 
-/* ---------- القوالب ---------- */
+/* ---------- القوالب (بلا شريط صناديق — الشريط أصبح للمراقبة) ---------- */
 async function loadInboxes(){
   try{
     const data = await api('/inboxes');
@@ -964,23 +976,33 @@ async function loadInboxes(){
     for(const ib of inboxesList){
       if(ib.message_templates?.length) inboxTemplates[ib.id] = ib.message_templates;
     }
-    renderInboxBar();
   }catch(e){}
 }
-function renderInboxBar(){
+/* ---------- شريط مراقبة الموظفات (للمدير فقط) ---------- */
+async function loadAgents(){
+  try{
+    const data = await api('/agents');
+    agentsList = (Array.isArray(data) ? data : (data.payload || [])).filter(a => a.role === 'agent');
+    renderAgentBar();
+  }catch(e){}
+}
+function renderAgentBar(){
   const bar = $('inboxBar');
   const sortChip = '<div class="inbox-chip sort-chip" id="sortChip">⇅ '
     + (currentSort==='waiting_since' ? 'الأقدم انتظاراً' : 'الأحدث نشاطاً') + '</div>';
-  const chips = [{id:0, name:'كل الصناديق'}].concat(inboxesList.map(i=>({id:i.id, name:i.name})));
-  bar.innerHTML = sortChip + chips.map(c=>'<div class="inbox-chip'+(currentInbox===c.id?' active':'')+'" data-id="'+c.id+'">'+esc(c.name)+'</div>').join('');
+  const chips = [{id:0, name:'الكل'}].concat(agentsList.map(a=>({id:a.id, name:'👁 '+a.name})));
+  bar.innerHTML = sortChip + chips.map(c=>'<div class="inbox-chip'+(agentView===c.id?' active':'')+'" data-aid="'+c.id+'">'+esc(c.name)+'</div>').join('');
   $('sortChip').onclick = ()=>{
     currentSort = currentSort==='waiting_since' ? 'latest' : 'waiting_since';
-    renderInboxBar();
+    renderAgentBar();
     $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
   };
-  bar.querySelectorAll('.inbox-chip[data-id]').forEach(ch=> ch.onclick = ()=>{
-    currentInbox = +ch.dataset.id; renderInboxBar();
+  bar.querySelectorAll('.inbox-chip[data-aid]').forEach(ch=> ch.onclick = ()=>{
+    agentView = +ch.dataset.aid;
+    renderAgentBar();
     $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView();
+    const a = agentsList.find(x=>x.id===agentView);
+    if(a) toast('وضع المراقبة: محادثات '+a.name);
   });
 }
 $('tplBtn').onclick = async ()=>{

@@ -212,8 +212,8 @@
     </div>
     <div class="inbox-bar" id="inboxBar"></div>
     <div class="filter-bar" id="filterBar">
-      <div class="f-chip active" data-f="all">الكل</div>
-      <div class="f-chip" data-f="unread">غير مقروءة</div>
+      <div class="f-chip active" data-f="all">الكل<span id="fCntAll"></span></div>
+      <div class="f-chip" data-f="unread">غير مقروءة<span id="fCntUnread"></span></div>
       <div class="f-chip" data-f="fav">⭐ المفضلة</div>
       <div class="f-chip" data-f="label">🏷 الوسوم</div>
     </div>
@@ -535,11 +535,19 @@ async function fillForFilter(){
 /* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر نشط تُجلب كل الصفحات */
 async function reloadForCurrentView(){
   await loadConversations(true);
-  if(currentFilter !== 'all') await fillForFilter();
+  // في وضع المراقبة: اجلب كل صفحات محادثات الموظفة (قليلة — الحد 50) حتى تكون العدادات دقيقة
+  if(currentFilter !== 'all' || agentView) await fillForFilter();
+}
+/* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + غير المقروء منها */
+function updateFilterCounts(){
+  const on = agentView && ME?.role === 'administrator';
+  $('fCntAll').textContent = on ? ' ('+conversations.length+')' : '';
+  $('fCntUnread').textContent = on ? ' ('+conversations.filter(c=>(c.unread_count||0)>0).length+')' : '';
 }
 function renderList(append=false){
   const el = $('convList');
   const keepScroll = append ? el.scrollTop : 0;
+  updateFilterCounts();
   if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
   // بانتظار الرد أولاً: آخر رسالة فعلية من العميل (وارد) تتصدر القائمة
   const awaits = c => c.last_non_activity_message?.message_type === 0;
@@ -990,7 +998,8 @@ function renderAgentBar(){
   const bar = $('inboxBar');
   const sortChip = '<div class="inbox-chip sort-chip" id="sortChip">⇅ '
     + (currentSort==='waiting_since' ? 'الأقدم انتظاراً' : 'الأحدث نشاطاً') + '</div>';
-  const chips = [{id:0, name:'الكل'}].concat(agentsList.map(a=>({id:a.id, name:'👁 '+a.name})));
+  // بلا رقاقة «الكل» (مكررة مع التبويب العلوي — الخروج من المراقبة عبر التبويبات)
+  const chips = agentsList.map(a=>({id:a.id, name:'👁 '+a.name}));
   bar.innerHTML = sortChip + chips.map(c=>'<div class="inbox-chip'+(agentView===c.id?' active':'')+'" data-aid="'+c.id+'">'+esc(c.name)+'</div>').join('');
   $('sortChip').onclick = ()=>{
     currentSort = currentSort==='waiting_since' ? 'latest' : 'waiting_since';

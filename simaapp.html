@@ -362,6 +362,7 @@ let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
 let agentsList = [];           // وكيلات الدعم — لشريط المراقبة
+let agentTotal = null;         // إجمالي المسند للموظفة المراقَبة — من عدّاد الخادم مباشرة (فوري)
 let currentSort = 'waiting_since'; // الأقدم انتظاراً أولاً — أو 'latest' للأحدث نشاطاً
 let inboxesList = [];
 let convPage = 1;
@@ -508,7 +509,10 @@ async function loadConversations(reset=true){
     conversations = reset ? page : conversations.concat(page);
     convHasMore = page.length >= 25;
     const meta = data.data?.meta || data.meta || {};
-    if(!agentView){
+    if(agentView){
+      // عدّاد الخادم للإجمالي — يظهر فوراً دون انتظار تحميل كل الصفحات
+      if(reset) agentTotal = meta.count ?? meta.all_count ?? null;
+    }else{
       $('cntAll').textContent = meta.all_count ?? '';
       $('cntMe').textContent = meta.mine_count ?? '';
       $('cntUn').textContent = meta.unassigned_count ?? '';
@@ -541,8 +545,11 @@ async function reloadForCurrentView(){
 /* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + غير المقروء منها */
 function updateFilterCounts(){
   const on = agentView && ME?.role === 'administrator';
-  $('fCntAll').textContent = on ? ' ('+conversations.length+')' : '';
-  $('fCntUnread').textContent = on ? ' ('+conversations.filter(c=>(c.unread_count||0)>0).length+')' : '';
+  const total = (agentTotal ?? conversations.length);
+  $('fCntAll').textContent = on ? ' ('+total+')' : '';
+  const unread = conversations.filter(c=>(c.unread_count||0)>0).length;
+  // غير المقروء يُحسب من المحمّل — تُضاف + ما دامت هناك صفحات لم تكتمل بعد
+  $('fCntUnread').textContent = on ? ' ('+unread+(convHasMore?'+':'')+')' : '';
 }
 function renderList(append=false){
   const el = $('convList');
@@ -647,7 +654,8 @@ function startListPolling(){
     // التحديث الدوري في وضع «الكل» فقط — الفلاتر المحلية تبقى ثابتة حتى لا تتقلب القائمة
     // ولا تحديث أثناء التمرير العميق أو البحث النشط
     // ولا تحديث والقائمة مخفية (داخل محادثة) — كانت تُقرأ scrollTop=0 خطأً فتعيد التحميل وتفقد الموضع
-    if(currentFilter==='all' && $('listScreen').classList.contains('active') && $('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
+    // ولا تحديث دوري في وضع المراقبة — كان يعيد العداد إلى 25 (تحديث المراقبة: زر 🔄 أو إعادة الضغط على اسم الموظفة)
+    if(!agentView && currentFilter==='all' && $('listScreen').classList.contains('active') && $('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
   }, POLL_LIST_MS);
 }
 /* عند العودة للتطبيق (فتح الهاتف/التبويب من جديد): تحديث فوري بدل عرض بيانات قديمة */

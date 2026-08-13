@@ -25,7 +25,7 @@
     --radius:14px;
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-  html,body{height:100%}
+  html,body{height:100%;overflow:hidden}   /* قفل تمرير الصفحة — التمرير داخل القوائم فقط */
   body{
     font-family:"Segoe UI","Helvetica Neue",Tahoma,Arial,sans-serif;
     background:#F0F2F5;color:var(--wa-ink);overflow:hidden;
@@ -1129,7 +1129,10 @@ $('convResolve').onclick = async ()=>{
     if(agentTotal != null && agentTotal > 0) agentTotal--;
     renderList();
     const anchorEl = anchorId ? listEl.querySelector('.conv[data-id="'+anchorId+'"]') : null;
-    if(anchorEl) anchorEl.scrollIntoView({block:'center'});
+    if(anchorEl){
+      // تمرير داخل القائمة فقط — scrollIntoView كان يحرّك الصفحة كلها على الحاسوب ويخفي الشريط العلوي
+      listEl.scrollTop += anchorEl.getBoundingClientRect().top - listEl.getBoundingClientRect().top - listEl.clientHeight/2 + anchorEl.clientHeight/2;
+    }
     else listEl.scrollTop = keepPos;
     toast('حُلّت المحادثة ✓');
   }catch(e){ toast('تعذّر تنفيذ العملية'); }
@@ -1157,7 +1160,8 @@ function bindMsgActions(){
       e.stopPropagation();
       const t = $('chatBody').querySelector('.msg[data-mid="'+q.dataset.rq+'"]');
       if(!t){ toast('الرسالة الأصلية غير معروضة هنا'); return; }
-      t.scrollIntoView({behavior:'smooth', block:'center'});
+      const cb = $('chatBody');
+      cb.scrollTo({ top: cb.scrollTop + t.getBoundingClientRect().top - cb.getBoundingClientRect().top - cb.clientHeight/2 + t.clientHeight/2, behavior: 'smooth' });
       t.classList.add('rq-flash');
       setTimeout(()=>t.classList.add('rq-fade'), 400);
       setTimeout(()=>t.classList.remove('rq-flash','rq-fade'), 1800);

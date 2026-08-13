@@ -497,7 +497,10 @@ async function loadConversations(reset=true){
       // وضع مراقبة موظفة: جلب محادثاتها المسندة إليها عبر فلتر Chatwoot الرسمي
       data = await api('/conversations/filter?page='+convPage, {
         method: 'POST',
-        body: JSON.stringify({ payload: [{ attribute_key: 'assignee_id', filter_operator: 'equal_to', values: [agentView], query_operator: null }] })
+        body: JSON.stringify({ payload: [
+          { attribute_key: 'status', filter_operator: 'equal_to', values: ['open'], query_operator: 'AND' },
+          { attribute_key: 'assignee_id', filter_operator: 'equal_to', values: [agentView], query_operator: null }
+        ] })
       });
     }else{
       const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
@@ -1116,7 +1119,7 @@ $('convResolve').onclick = async ()=>{
   if(!confirm('حل المحادثة وإخفاؤها من قائمة «فتح»؟\n(لا تُحذف نهائياً — تعود تلقائياً إن راسل العميل مجدداً)')) return;
   try{
     await api('/conversations/'+selConvId+'/toggle_status',{method:'POST'});
-    toast('حُلّت المحادثة ✓'); loadConversations(true);
+    toast('حُلّت المحادثة ✓'); reloadForCurrentView();
   }catch(e){ toast('تعذّر تنفيذ العملية'); }
 };
 

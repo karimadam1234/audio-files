@@ -566,9 +566,10 @@ function renderList(append=false){
   else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }
-  const sorted = pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
-  // المثبتة تتصدر كل شيء
-  const finalList = sorted.filter(c=>pins.has(c.id)).concat(sorted.filter(c=>!pins.has(c.id)));
+  // في وضع المراقبة: نحافظ على ترتيب الخادم كما هو — إعادة الفرز كانت تحرّك المحتوى مع كل صفحة تُحمَّل فيقفز الموضع
+  const sorted = agentView ? pool : pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
+  // المثبتة تتصدر كل شيء (خارج وضع المراقبة)
+  const finalList = agentView ? sorted : sorted.filter(c=>pins.has(c.id)).concat(sorted.filter(c=>!pins.has(c.id)));
   el.innerHTML = finalList.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
@@ -1119,7 +1120,18 @@ $('convResolve').onclick = async ()=>{
   if(!confirm('حل المحادثة وإخفاؤها من قائمة «فتح»؟\n(لا تُحذف نهائياً — تعود تلقائياً إن راسل العميل مجدداً)')) return;
   try{
     await api('/conversations/'+selConvId+'/toggle_status',{method:'POST'});
-    toast('حُلّت المحادثة ✓'); reloadForCurrentView();
+    // إزالة محلية مع تثبيت الموضع على «مرساة»: الصف المجاور للمحذوف — أدق من البكسل لأن المحتوى قد يتحرك
+    const listEl = $('convList');
+    const keepPos = listEl.scrollTop;
+    const rowEl = listEl.querySelector('.conv[data-id="'+selConvId+'"]');
+    const anchorId = rowEl?.nextElementSibling?.dataset?.id || rowEl?.previousElementSibling?.dataset?.id || null;
+    conversations = conversations.filter(c=>c.id!==selConvId);
+    if(agentTotal != null && agentTotal > 0) agentTotal--;
+    renderList();
+    const anchorEl = anchorId ? listEl.querySelector('.conv[data-id="'+anchorId+'"]') : null;
+    if(anchorEl) anchorEl.scrollIntoView({block:'center'});
+    else listEl.scrollTop = keepPos;
+    toast('حُلّت المحادثة ✓');
   }catch(e){ toast('تعذّر تنفيذ العملية'); }
 };
 

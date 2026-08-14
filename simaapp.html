@@ -244,7 +244,7 @@
         <button class="note-toggle" id="attachBtn" title="إرفاق صورة/فيديو/ملف">📎</button>
         <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
       </div>
-      <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
+      <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
       <button class="send-btn" id="micBtn" title="رسالة صوتية" style="background:#fff;color:var(--wa-green-dark);box-shadow:0 1px 2px rgba(0,0,0,.08)">🎤</button>
       <button class="send-btn" id="sendBtn">◀</button>
     </div>
@@ -842,35 +842,44 @@ function waCategory(f){
   return 'other';
 }
 $('fileInput').addEventListener('change', async ()=>{
-  const file = $('fileInput').files[0];
-  if(!file || !currentConv) return;
-  const cat = waCategory(file);
-  if(file.size > WA_LIMITS_MB[cat]*1024*1024){
-    toast('حجم '+WA_TYPE_AR[cat]+' الأقصى في واتساب '+WA_LIMITS_MB[cat]+'MB');
-    $('fileInput').value=''; return;
+  const files = Array.from($('fileInput').files || []);
+  if(!files.length || !currentConv) return;
+  // فحص أحجام كل الملفات قبل البدء — لا نرسل نصف الدفعة ثم نكتشف ملفاً كبيراً
+  for(const f of files){
+    const cat = waCategory(f);
+    if(f.size > WA_LIMITS_MB[cat]*1024*1024){
+      toast('«'+f.name.slice(0,25)+'» يتجاوز حد '+WA_TYPE_AR[cat]+' في واتساب ('+WA_LIMITS_MB[cat]+'MB)');
+      $('fileInput').value=''; return;
+    }
   }
-  toast('جارٍ إرسال المرفق…');
+  const cap = inputEl.value.trim();
+  let sent = 0;
   try{
-    const fd = new FormData();
-    fd.append('attachments[]', file);
-    fd.append('message_type','outgoing');
-    if(replyTo) fd.append('content_attributes[in_reply_to]', replyTo.id);   // رد على رسالة محددة
-    const cap = inputEl.value.trim();
-    if(cap) fd.append('content', cap);
-    const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages', {
-      method:'POST', headers:{ 'api_access_token': TOKEN }, body: fd
-    });
-    if(!res.ok){
-      let t=''; try{ t=(await res.text()).slice(0,80); }catch(_){}
-      throw new Error('HTTP '+res.status+(t?' — '+t:''));
+    for(let i=0; i<files.length; i++){
+      toast(files.length>1 ? 'جارٍ إرسال المرفق '+(i+1)+' من '+files.length+'…' : 'جارٍ إرسال المرفق…');
+      const fd = new FormData();
+      fd.append('attachments[]', files[i]);
+      fd.append('message_type','outgoing');
+      if(replyTo && i===0) fd.append('content_attributes[in_reply_to]', replyTo.id);   // الاقتباس على الأول فقط
+      if(cap && i===0) fd.append('content', cap);                                       // النص المكتوب مع الأول فقط
+      const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages', {
+        method:'POST', headers:{ 'api_access_token': TOKEN }, body: fd
+      });
+      if(!res.ok){
+        let t=''; try{ t=(await res.text()).slice(0,80); }catch(_){}
+        throw new Error('HTTP '+res.status+(t?' — '+t:''));
+      }
+      sent++;
     }
     inputEl.value=''; inputEl.style.height='auto';
     cancelReply();
-    toast('أُرسل المرفق ✓'); await refreshChat(true);
+    toast(files.length>1 ? 'أُرسلت '+sent+' مرفقات ✓' : 'أُرسل المرفق ✓');
+    await refreshChat(true);
   }catch(e){
     // عرض السبب الحقيقي — «Failed to fetch» يعني انقطاع الشبكة أثناء الرفع
     const msg = (e && e.message) ? e.message : 'خطأ غير معروف';
-    toast('تعذّر إرسال المرفق — ' + (msg.includes('Failed to fetch') ? 'انقطعت الشبكة أثناء الرفع (جرّبي على Wi-Fi)' : msg));
+    toast('تعذّر المرفق '+(sent+1)+(files.length>1?' من '+files.length:'')+' — ' + (msg.includes('Failed to fetch') ? 'انقطعت الشبكة أثناء الرفع (جرّبي على Wi-Fi)' : msg));
+    if(sent) await refreshChat(true);   // ما أُرسل قبل الانقطاع يظهر في المحادثة
   }
   finally{ $('fileInput').value=''; }
 });

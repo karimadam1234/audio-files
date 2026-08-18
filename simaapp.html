@@ -554,7 +554,10 @@ function updateFilterCounts(){
   // غير المقروء يُحسب من المحمّل — تُضاف + ما دامت هناك صفحات لم تكتمل بعد
   $('fCntUnread').textContent = on ? ' ('+unread+(convHasMore?'+':'')+')' : '';
 }
+/* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
+function searchActive(){ return $('searchInput').value.trim().length >= 2; }
 function renderList(append=false){
+  if(searchActive()) return;   // حماية جذرية: نتائج البحث لا تُمسح بأي تحديث خلفي
   const el = $('convList');
   const keepScroll = append ? el.scrollTop : 0;
   updateFilterCounts();
@@ -700,6 +703,7 @@ async function openConversation(id){
   // تصفير الشارة محلياً فوراً + خطوة رجوع للعودة إلى القائمة بزر الهاتف
   const c0 = conversations.find(c=>c.id===id); if(c0) c0.unread_count = 0;
   lastSeenInMsgId = 0; lastMsgsFp = '';
+  olderMsgs = []; olderDone = false; olderLoading = false;   // سجل الأقدم يبدأ من جديد لكل محادثة
   if(!(history.state && history.state.s==='chat')) history.pushState({s:'chat'}, '');
   show('chatScreen');
   await refreshChat(true);
@@ -731,7 +735,12 @@ async function refreshChat(scrollToEnd){
     $('resolveTxt').textContent = (convData.status==='resolved') ? 'إعادة فتح المحادثة' : 'حل المحادثة (إغلاق)';
 
     const msgs = await api('/conversations/'+currentConv.id+'/messages');
-    const payload = msgs.payload || [];
+    let payload = msgs.payload || [];
+    // الخادم يعيد آخر 20 رسالة فقط — ندمج معها ما حُمّل سابقاً من الأقدم (زر «الرسائل الأقدم») حتى لا يضيع السجل
+    if(olderMsgs.length && olderMsgs[0]._conv === currentConv.id){
+      const ids = new Set(payload.map(m=>m.id));
+      payload = olderMsgs.filter(m=>!ids.has(m.id)).concat(payload);
+    }
     // كل رسالة واردة جديدة أثناء فتح المحادثة → تحديث «آخر اطلاع» في الخادم
     const lastIn = [...payload].reverse().find(m=>m.message_type===0);
     if(lastIn && lastIn.id !== lastSeenInMsgId){
@@ -741,6 +750,39 @@ async function refreshChat(scrollToEnd){
     renderMessages(payload, scrollToEnd);
   }catch(e){ /* صمت */ }
 }
+/* ---------- تحميل الرسائل الأقدم (سجل كامل) ---------- */
+let olderMsgs = [];          // الرسائل الأقدم المحمّلة يدوياً — تُدمج مع كل تحديث
+let olderDone = false;       // وصلنا لبداية المحادثة
+let olderLoading = false;
+async function loadOlder(){
+  if(!currentConv || olderLoading || olderDone) return;
+  const body = $('chatBody');
+  const first = lastMsgs.find(m=>m.id);   // أقدم رسالة معروضة حالياً
+  if(!first) return;
+  olderLoading = true;
+  const btn = $('olderBtn'); if(btn){ btn.textContent = 'جارٍ التحميل…'; btn.disabled = true; }
+  const prevH = body.scrollHeight;
+  try{
+    const d = await api('/conversations/'+currentConv.id+'/messages?before='+first.id);
+    const older = (d.payload || []).map(m=>({...m, _conv: currentConv.id}));
+    if(!older.length){ olderDone = true; }
+    else{
+      const ids = new Set(olderMsgs.map(m=>m.id));
+      olderMsgs = older.filter(m=>!ids.has(m.id)).concat(olderMsgs);
+      if(older.length < 20) olderDone = true;
+    }
+    lastMsgsFp = '';                       // إجبار إعادة الرسم
+    await refreshChat(false);
+    // إبقاء الموظفة على نفس الرسالة التي كانت تنظر إليها (المحتوى الجديد أُضيف فوقها)
+    body.scrollTop = body.scrollHeight - prevH;
+  }catch(e){ toast('تعذّر تحميل الرسائل الأقدم'); }
+  finally{ olderLoading = false; }
+}
+/* التمرير إلى أعلى المحادثة يحمّل الأقدم تلقائياً */
+$('chatBody').addEventListener('scroll', ()=>{
+  const b = $('chatBody');
+  if(b.scrollTop < 60 && !olderDone && !olderLoading && lastMsgs.length >= 20) loadOlder();
+});
 let lastMsgsFp = '';
 function renderMessages(msgs, forceScroll){
   lastMsgs = msgs;
@@ -753,6 +795,9 @@ function renderMessages(msgs, forceScroll){
   lastMsgsFp = fp;
   const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 120;
   let html='', lastDay='';
+  // زر «الرسائل الأقدم» في الأعلى — يظهر ما دام هناك أقدم لم يُحمَّل بعد
+  if(msgs.length >= 20 && !olderDone) html += '<div style="text-align:center;padding:6px"><button id="olderBtn" onclick="loadOlder()" style="background:#fff;border:1px solid var(--wa-line);border-radius:16px;padding:6px 14px;font-size:13px;color:var(--wa-green-dark);cursor:pointer">⬆ عرض الرسائل الأقدم</button></div>';
+  else if(olderDone) html += '<div class="day-sep" style="opacity:.6">— بداية المحادثة —</div>';
   for(const m of msgs){
     const day = fmtDay(m.created_at);
     if(day!==lastDay){ html += '<div class="day-sep">'+day+'</div>'; lastDay=day; }
@@ -1087,13 +1132,14 @@ $('searchClose').onclick = ()=>{ $('searchRow').style.display='none'; $('searchI
 $('searchInput').addEventListener('input', ()=>{
   clearTimeout(searchTimer);
   const q = $('searchInput').value.trim();
-  if(q.length<2){ return; }
+  if(q.length<2){ if(!q) loadConversations(true); return; }   // مسح النص يعيد القائمة العادية
   searchTimer = setTimeout(()=>doSearch(q), 450);
 });
 async function doSearch(q){
   $('convList').innerHTML='<div class="spin"></div>';
   try{
     const d = await api('/contacts/search?q='+encodeURIComponent(q)+'&page=1');
+    if($('searchInput').value.trim() !== q) return;   // كتبت الموظفة شيئاً آخر أثناء الانتظار — نتيجة قديمة تُهمل
     const list = d.payload || [];
     if(!list.length){ $('convList').innerHTML='<div class="empty">لا نتائج لـ «'+esc(q)+'»</div>'; return; }
     $('convList').innerHTML = list.map(c=>{

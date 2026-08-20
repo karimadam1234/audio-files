@@ -244,7 +244,8 @@
         <button class="note-toggle" id="attachBtn" title="إرفاق صورة/فيديو/ملف">📎</button>
         <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
       </div>
-      <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx">
+      <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*">
+      <input type="file" id="fileInputDoc" multiple style="display:none" accept="application/pdf,.pdf,.doc,.docx,.xls,.xlsx">
       <button class="send-btn" id="micBtn" title="رسالة صوتية" style="background:#fff;color:var(--wa-green-dark);box-shadow:0 1px 2px rgba(0,0,0,.08)">🎤</button>
       <button class="send-btn" id="sendBtn">◀</button>
     </div>
@@ -284,6 +285,12 @@
     <div class="row" id="msgCopy"><div class="ic">📋</div> نسخ النص</div>
     <div class="row" id="msgShare"><div class="ic">↗️</div> مشاركة</div>
     <div class="row" id="msgDelete" style="color:var(--wa-danger)"><div class="ic">🗑</div> حذف الرسالة (من النظام فقط)</div>
+  </div>
+
+  <div class="sheet" id="attachSheet">
+    <h3>ماذا تريدين إرساله؟</h3>
+    <div class="row" id="attachMedia"><div class="ic">🖼</div> صورة أو فيديو</div>
+    <div class="row" id="attachDoc"><div class="ic">📄</div> ملف PDF أو مستند</div>
   </div>
 
   <div class="sheet" id="filterLabelSheet">
@@ -874,8 +881,10 @@ $('replyCancel').onclick = cancelReply;
 /* ---------- إرسال مرفقات (صورة/فيديو/PDF) ---------- */
 $('attachBtn').onclick = ()=>{
   if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال مرفقات، فقط قالب 📋'); return; }
-  $('fileInput').click();
+  openSheet('attachSheet');   // فصل الصور عن المستندات — بعض الهواتف لا تعرض «الملفات» عند خلط النوعين
 };
+$('attachMedia').onclick = ()=>{ closeSheets(); $('fileInput').click(); };
+$('attachDoc').onclick   = ()=>{ closeSheets(); $('fileInputDoc').click(); };
 /* حدود واتساب Cloud API لكل نوع (لا يمكن تجاوزها — حدود Meta نفسها) */
 const WA_LIMITS_MB = { image: 5, video: 16, audio: 16, other: 100 };
 const WA_TYPE_AR  = { image: 'الصورة', video: 'الفيديو', audio: 'الملف الصوتي', other: 'المستند' };
@@ -886,15 +895,17 @@ function waCategory(f){
   if(t.startsWith('audio/')) return 'audio';
   return 'other';
 }
-$('fileInput').addEventListener('change', async ()=>{
-  const files = Array.from($('fileInput').files || []);
+$('fileInput').addEventListener('change', ()=>onFilesChosen($('fileInput')));
+$('fileInputDoc').addEventListener('change', ()=>onFilesChosen($('fileInputDoc')));
+async function onFilesChosen(inp){
+  const files = Array.from(inp.files || []);
   if(!files.length || !currentConv) return;
   // فحص أحجام كل الملفات قبل البدء — لا نرسل نصف الدفعة ثم نكتشف ملفاً كبيراً
   for(const f of files){
     const cat = waCategory(f);
     if(f.size > WA_LIMITS_MB[cat]*1024*1024){
       toast('«'+f.name.slice(0,25)+'» يتجاوز حد '+WA_TYPE_AR[cat]+' في واتساب ('+WA_LIMITS_MB[cat]+'MB)');
-      $('fileInput').value=''; return;
+      inp.value=''; return;
     }
   }
   const cap = inputEl.value.trim();
@@ -931,8 +942,8 @@ $('fileInput').addEventListener('change', async ()=>{
     toast('تعذّر المرفق '+(sent+1)+(files.length>1?' من '+files.length:'')+' — ' + nice);
     if(sent) await refreshChat(true);   // ما أُرسل قبل الانقطاع يظهر في المحادثة
   }
-  finally{ $('fileInput').value=''; }
-});
+  finally{ inp.value=''; }
+}
 
 /* رفع مرفق عبر XHR مع نسبة تقدم — الهواتف تقطع الرفع عند الخروج من الشاشة، فالنسبة تُبقي الموظفة منتظرة */
 function uploadAttachmentXHR(fd, label){

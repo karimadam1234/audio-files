@@ -901,19 +901,22 @@ $('fileInput').addEventListener('change', async ()=>{
   let sent = 0;
   try{
     for(let i=0; i<files.length; i++){
-      toast(files.length>1 ? 'جارٍ إرسال المرفق '+(i+1)+' من '+files.length+'…' : 'جارٍ إرسال المرفق…');
-      const fd = new FormData();
-      fd.append('attachments[]', files[i]);
-      fd.append('message_type','outgoing');
-      if(replyTo && i===0) fd.append('content_attributes[in_reply_to]', replyTo.id);   // الاقتباس على الأول فقط
-      if(cap && i===0) fd.append('content', cap);                                       // النص المكتوب مع الأول فقط
-      const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages', {
-        method:'POST', headers:{ 'api_access_token': TOKEN }, body: fd
-      });
-      if(!res.ok){
-        let t=''; try{ t=(await res.text()).slice(0,80); }catch(_){}
-        throw new Error('HTTP '+res.status+(t?' — '+t:''));
+      const label = files.length>1 ? 'المرفق '+(i+1)+' من '+files.length : 'المرفق';
+      let ok = false, lastErr = null;
+      for(let attempt=1; attempt<=3 && !ok; attempt++){
+        if(attempt>1){
+          toast('انقطع الرفع — إعادة محاولة '+label+' ('+attempt+' من 3)…');
+          await new Promise(r=>setTimeout(r, 1500*attempt));   // مهلة متزايدة قبل كل إعادة
+        }
+        const fd = new FormData();
+        fd.append('attachments[]', files[i]);
+        fd.append('message_type','outgoing');
+        if(replyTo && i===0) fd.append('content_attributes[in_reply_to]', replyTo.id);   // الاقتباس على الأول فقط
+        if(cap && i===0) fd.append('content', cap);                                       // النص المكتوب مع الأول فقط
+        try{ await uploadAttachmentXHR(fd, label); ok = true; }
+        catch(e){ lastErr = e; }
       }
+      if(!ok) throw lastErr;
       sent++;
     }
     inputEl.value=''; inputEl.style.height='auto';
@@ -921,13 +924,42 @@ $('fileInput').addEventListener('change', async ()=>{
     toast(files.length>1 ? 'أُرسلت '+sent+' مرفقات ✓' : 'أُرسل المرفق ✓');
     await refreshChat(true);
   }catch(e){
-    // عرض السبب الحقيقي — «Failed to fetch» يعني انقطاع الشبكة أثناء الرفع
     const msg = (e && e.message) ? e.message : 'خطأ غير معروف';
-    toast('تعذّر المرفق '+(sent+1)+(files.length>1?' من '+files.length:'')+' — ' + (msg.includes('Failed to fetch') ? 'انقطعت الشبكة أثناء الرفع (جرّبي على Wi-Fi)' : msg));
+    const nice = msg==='NETWORK' ? 'انقطعت الشبكة 3 مرات — ابقي داخل التطبيق والشاشة مضاءة حتى يكتمل الرفع'
+               : msg==='TIMEOUT' ? 'الاتصال بطيء جداً — جرّبي على Wi-Fi أو قرب النافذة'
+               : msg;
+    toast('تعذّر المرفق '+(sent+1)+(files.length>1?' من '+files.length:'')+' — ' + nice);
     if(sent) await refreshChat(true);   // ما أُرسل قبل الانقطاع يظهر في المحادثة
   }
   finally{ $('fileInput').value=''; }
 });
+
+/* رفع مرفق عبر XHR مع نسبة تقدم — الهواتف تقطع الرفع عند الخروج من الشاشة، فالنسبة تُبقي الموظفة منتظرة */
+function uploadAttachmentXHR(fd, label){
+  return new Promise((resolve, reject)=>{
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages');
+    xhr.setRequestHeader('api_access_token', TOKEN);
+    xhr.timeout = 180000;   // 3 دقائق كحد أقصى للملف الواحد
+    let lastPct = -10;
+    xhr.upload.onprogress = e=>{
+      if(e.lengthComputable){
+        const pct = Math.round(e.loaded/e.total*100);
+        if(pct - lastPct >= 5 || pct === 100){   // تحديث كل 5٪ فقط حتى لا يرتجف الإشعار
+          lastPct = pct;
+          toast('جارٍ إرسال '+label+' — '+pct+'٪ (ابقي على الشاشة)');
+        }
+      }
+    };
+    xhr.onload   = ()=> (xhr.status>=200 && xhr.status<300)
+      ? resolve()
+      : reject(new Error('HTTP '+xhr.status+' — '+String(xhr.responseText||'').slice(0,80)));
+    xhr.onerror  = ()=> reject(new Error('NETWORK'));
+    xhr.onabort  = ()=> reject(new Error('NETWORK'));
+    xhr.ontimeout= ()=> reject(new Error('TIMEOUT'));
+    xhr.send(fd);
+  });
+}
 
 /* ---------- تحويل التسجيل إلى MP3 (نفس أسلوب Chatwoot الرسمي) ---------- */
 async function recordingToMp3(blob, bitrate=128){

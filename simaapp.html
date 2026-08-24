@@ -640,18 +640,22 @@ function updateFilterCounts(){
   const srv = waitCountForView();
   const wait = srv !== null ? srv : conversations.filter(isWaiting).length;
   $('fCntWait').textContent = wait ? ' ('+wait+(srv === null && convHasMore ? '+' : '')+')' : '';
-  // المدير لا تعنيه «غير مقروءة» — فتحه للمحادثة يُعلّمها مقروءة فيضلّله الرقم.
-  // يبقى له «ينتظر رداً»، وفي وضع مراقبة موظفة يظهر أيضاً «بانتظار الرد» (آخر 24 ساعة).
-  const unreadChip = document.querySelector('.f-chip[data-f="unread"]');
-  if(unreadChip){
-    const hideUnread = ME?.role === 'administrator' && !agentView;
-    unreadChip.style.display = hideUnread ? 'none' : '';
-    if(hideUnread && currentFilter === 'unread'){
+  // توزيع التبويبات حسب الدور:
+  // المدير  → «ينتظر رداً» (للمراجعة وفهم سبب عدم الرد)، ولا «غير مقروءة» لأن فتحه للمحادثة يُعلّمها مقروءة.
+  // الموظفة → «غير مقروءة» فقط كما اعتادت — بلا «ينتظر رداً» وبلا زر الإغلاق السريع.
+  const isAdmin = ME?.role === 'administrator';
+  const setChip = (f, show) => {
+    const chip = document.querySelector('.f-chip[data-f="'+f+'"]');
+    if(!chip) return;
+    chip.style.display = show ? '' : 'none';
+    if(!show && currentFilter === f){
       currentFilter = 'all';
       document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
       document.querySelector('.f-chip[data-f="all"]').classList.add('active');
     }
-  }
+  };
+  setChip('waiting', isAdmin);
+  setChip('unread', !isAdmin || !!agentView);
 }
 /* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
 function searchActive(){ return $('searchInput').value.trim().length >= 2; }
@@ -694,7 +698,7 @@ function renderList(append=false){
       + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(ts)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '<span class="fav-star'+(favs.has(c.id)?' on':'')+'" data-fav="'+c.id+'">⭐</span>'
-      + (currentFilter==='waiting' ? '<span class="skip-btn" data-skip="'+c.id+'" title="لا يستحق رداً — إغلاق">✓</span>' : '')
+      + (currentFilter==='waiting' && ME?.role === 'administrator' ? '<span class="skip-btn" data-skip="'+c.id+'" title="لا يستحق رداً — إغلاق">✓</span>' : '')
       + '</div></div>';
   }).join('') + (convHasMore && currentFilter==='all' ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
   el.querySelectorAll('.conv').forEach(d=>{

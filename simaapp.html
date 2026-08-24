@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-a';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-b';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -624,13 +624,18 @@ async function refreshWaitStats(force){
   }catch(e){ /* الواجهة اختيارية — عند تعذّرها نعود للعدّ المحلي */ }
 }
 /* أي رقم يخص العرض الحالي: موظفة مراقَبة / محادثاتي / غير معيّن / الكل */
-function waitCountForView(){
+function statForView(key){
   if(!waitStats) return null;
-  if(agentView) return Number(waitStats.agents?.[String(agentView)] || 0);
-  if(currentTab === 'me') return Number(waitStats.agents?.[String(ME?.id)] || 0);
-  if(currentTab === 'unassigned') return Number(waitStats.unassigned || 0);
-  return Number(waitStats.total || 0);
+  const map = key === 'unread' ? waitStats.unread : waitStats.agents;
+  const tot = key === 'unread' ? waitStats.unread_total : waitStats.total;
+  const un  = key === 'unread' ? waitStats.unread_unassigned : waitStats.unassigned;
+  if(tot === undefined) return null;   // نسخة قديمة من الواجهة — نعود للعدّ المحلي
+  if(agentView) return Number(map?.[String(agentView)] || 0);
+  if(currentTab === 'me') return Number(map?.[String(ME?.id)] || 0);
+  if(currentTab === 'unassigned') return Number(un || 0);
+  return Number(tot || 0);
 }
+function waitCountForView(){ return statForView('waiting'); }
 /* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + كم منها ينتظر ردها */
 function updateFilterCounts(){
   const on = agentView && ME?.role === 'administrator';
@@ -643,7 +648,13 @@ function updateFilterCounts(){
     const m = c.last_non_activity_message;
     return m && m.message_type === 0 && Number(m.created_at||0) >= dayAgo;
   }).length;
-  $('fCntUnread').textContent = on ? ' ('+waiting+(convHasMore?'+':'')+')' : '';
+  // عدّاد «غير مقروءة» للموظفة: رقم دقيق من الخادم (كل محادثاتها لا الصفحات المحمّلة فقط)
+  const unSrv = statForView('unread');
+  const unLocal = conversations.filter(c=>(c.unread_count||0) > 0).length;
+  const unShown = unSrv !== null ? unSrv : unLocal;
+  $('fCntUnread').textContent = on
+    ? ' ('+waiting+(convHasMore?'+':'')+')'
+    : (unShown ? ' ('+unShown+(unSrv === null && convHasMore ? '+' : '')+')' : '');
   $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
   // عدّاد «ينتظر رداً» — للجميع (موظفة أو مدير)، بلا حد زمني: التراكم القديم يجب أن يظهر
   // الرقم من الخادم دقيق وفوري؛ وعند تعذّره نعرض العدّ المحلي مع + للدلالة على النقص

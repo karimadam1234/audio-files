@@ -374,6 +374,8 @@ let currentSort = 'waiting_since'; // الأقدم انتظاراً أولاً �
 let inboxesList = [];
 let convPage = 1;
 let viewSeq = 0;               // رقم العرض الحالي — يتغيّر مع كل تبديل موظفة/تبويب/فلتر فتُهمل النتائج المتأخرة
+let convReq = 0;               // رقم آخر طلب قائمة — يمنع تعليق التطبيق على طلب قديم بطيء
+let lastMonitorPoll = 0;       // آخر تحديث دوري في وضع المراقبة (أبطأ من العادي — الطلبات ثقيلة)
 let convHasMore = true;
 let convLoading = false;
 let conversations = [];
@@ -495,8 +497,10 @@ $('tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin();
 $('logoutBtn').onclick = ()=>{ if(confirm('تسجيل الخروج؟')) logout(); };
 
 /* ---------- قائمة المحادثات ---------- */
-async function loadConversations(reset=true){
-  if(convLoading) return;
+async function loadConversations(reset=true, force=false){
+  // طلب المستخدم (نقر على موظفة/تبويب/تحديث) لا ينتظر طلباً بطيئاً جارياً — يتجاوزه ويُهمل نتيجته
+  if(convLoading && !force) return;
+  const my = ++convReq;
   convLoading = true;
   const seq = viewSeq;            // لقطة العرض عند بدء الطلب
   try{
@@ -518,7 +522,7 @@ async function loadConversations(reset=true){
     // وصلت النتائج والموظفة داخل محادثة؟ تجاهلها — حتى لا تُمسح الصفحات المحمّلة ويضيع موضع التمرير عند الرجوع
     if($('chatScreen').classList.contains('active')) return;
     // تبدّل العرض أثناء الانتظار (موظفة أخرى/تبويب آخر)؟ نتيجة قديمة — تُهمل حتى لا تختلط الأرقام
-    if(seq !== viewSeq) return;
+    if(seq !== viewSeq || my !== convReq) return;
     const page = data.data?.payload || data.payload || [];
     conversations = reset ? page : conversations.concat(page);
     convHasMore = page.length >= 25;
@@ -533,7 +537,7 @@ async function loadConversations(reset=true){
     }
     renderList(!reset);
   }catch(e){ /* صمت أثناء الاستطلاع */ }
-  finally{ convLoading = false; }
+  finally{ if(my === convReq) convLoading = false; }
 }
 /* تمرير لانهائي: جلب الصفحة التالية قرب نهاية القائمة */
 $('convList').addEventListener('scroll', ()=>{
@@ -546,7 +550,9 @@ $('convList').addEventListener('scroll', ()=>{
 async function fillForFilter(){
   let guard = 0;
   const seq = viewSeq;
-  while(convHasMore && !convLoading && guard < 40 && !$('chatScreen').classList.contains('active')){
+  // في وضع المراقبة الصفحات ثقيلة (آلاف المحادثات) — نكتفي بـ6 صفحات ونضع + للباقي
+  const maxPages = agentView ? 6 : 40;
+  while(convHasMore && !convLoading && guard < maxPages && !$('chatScreen').classList.contains('active')){
     if(seq !== viewSeq) return;   // تبدّل العرض — أوقف الملء القديم فوراً
     guard++; convPage++;
     await loadConversations(false);
@@ -554,7 +560,7 @@ async function fillForFilter(){
 }
 /* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر محلي نشط تُجلب كل الصفحات */
 async function reloadForCurrentView(){
-  await loadConversations(true);
+  await loadConversations(true, true);   // طلب المستخدم يتجاوز أي طلب بطيء جارٍ
   // وضع المراقبة لا يملأ كل الصفحات: الترتيب من الخادم يضع الأقدم انتظاراً أولاً، والباقي بالتمرير
   if(currentFilter !== 'all') await fillForFilter();
 }
@@ -563,9 +569,13 @@ function updateFilterCounts(){
   const on = agentView && ME?.role === 'administrator';
   const total = (agentTotal ?? conversations.length);
   $('fCntAll').textContent = on ? ' ('+total+')' : '';
-  // «بانتظار الرد» = آخر رسالة فعلية من العميل. مؤشر صادق لا يتأثر بمن فتح المحادثة،
-  // عكس «غير مقروءة» التي يصفّرها أي شخص يفتح المحادثة (بما فيهم المدير أثناء المراقبة).
-  const waiting = conversations.filter(c=>c.last_non_activity_message?.message_type === 0).length;
+  // «ينتظر اليوم» = آخر رسالة من العميل خلال آخر 24 ساعة فقط. التراكم القديم ليس عمل اليوم
+  // فلا يُحتسب هنا (يبقى ضمن رقم «الكل»)، والمؤشر لا يتأثر بمن فتح المحادثة.
+  const dayAgo = Date.now()/1000 - 86400;
+  const waiting = conversations.filter(c=>{
+    const m = c.last_non_activity_message;
+    return m && m.message_type === 0 && Number(m.created_at||0) >= dayAgo;
+  }).length;
   $('fCntUnread').textContent = on ? ' ('+waiting+(convHasMore?'+':'')+')' : '';
   $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
 }
@@ -676,8 +686,13 @@ function startListPolling(){
     // التحديث الدوري في وضع «الكل» فقط — الفلاتر المحلية تبقى ثابتة حتى لا تتقلب القائمة
     // ولا تحديث أثناء التمرير العميق أو البحث النشط
     // ولا تحديث والقائمة مخفية (داخل محادثة) — كانت تُقرأ scrollTop=0 خطأً فتعيد التحميل وتفقد الموضع
-    // وضع المراقبة يتحدث أيضاً: الإجمالي من عدّاد الخادم و«بانتظار الرد» من أول صفحة (الأقدم انتظاراً)
-    if(currentFilter==='all' && $('listScreen').classList.contains('active') && $('convList').scrollTop < 120 && !$('searchInput').value.trim()) loadConversations(true);
+    if(!(currentFilter==='all' && $('listScreen').classList.contains('active') && $('convList').scrollTop < 120 && !$('searchInput').value.trim())) return;
+    // وضع المراقبة يتحدث أيضاً لكن كل 30 ثانية — طلباته ثقيلة (موظفة بآلاف المحادثات)
+    if(agentView){
+      if(Date.now() - lastMonitorPoll < 30000) return;
+      lastMonitorPoll = Date.now();
+    }
+    loadConversations(true);
   }, POLL_LIST_MS);
 }
 /* عند العودة للتطبيق (فتح الهاتف/التبويب من جديد): تحديث فوري بدل عرض بيانات قديمة */

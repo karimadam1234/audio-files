@@ -213,6 +213,7 @@
     <div class="inbox-bar" id="inboxBar"></div>
     <div class="filter-bar" id="filterBar">
       <div class="f-chip active" data-f="all">الكل<span id="fCntAll"></span></div>
+      <div class="f-chip" data-f="waiting">⏳ ينتظر رداً<span id="fCntWait"></span></div>
       <div class="f-chip" data-f="unread"><span id="fLblUnread">غير مقروءة</span><span id="fCntUnread"></span></div>
       <div class="f-chip" data-f="fav">⭐ المفضلة</div>
       <div class="f-chip" data-f="label">🏷 الوسوم</div>
@@ -564,6 +565,9 @@ async function reloadForCurrentView(){
   // وضع المراقبة لا يملأ كل الصفحات: الترتيب من الخادم يضع الأقدم انتظاراً أولاً، والباقي بالتمرير
   if(currentFilter !== 'all') await fillForFilter();
 }
+/* «ينتظر رداً»: آخر رسالة فعلية في المحادثة من العميل — مستقل تماماً عن حالة القراءة،
+   فلا تختفي محادثة لمجرد أن أحداً فتحها دون أن يرد. هو معيار التبويب الدائم والعدّاد. */
+const isWaiting = c => c.last_non_activity_message?.message_type === 0;
 /* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + كم منها ينتظر ردها */
 function updateFilterCounts(){
   const on = agentView && ME?.role === 'administrator';
@@ -578,6 +582,9 @@ function updateFilterCounts(){
   }).length;
   $('fCntUnread').textContent = on ? ' ('+waiting+(convHasMore?'+':'')+')' : '';
   $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
+  // عدّاد «ينتظر رداً» — للجميع (موظفة أو مدير)، بلا حد زمني: التراكم القديم يجب أن يظهر
+  const wait = conversations.filter(isWaiting).length;
+  $('fCntWait').textContent = wait ? ' ('+wait+(convHasMore?'+':'')+')' : '';
 }
 /* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
 function searchActive(){ return $('searchInput').value.trim().length >= 2; }
@@ -588,9 +595,10 @@ function renderList(append=false){
   updateFilterCounts();
   if(!conversations.length){ el.innerHTML = '<div class="empty">لا توجد محادثات هنا حالياً 🕊<br>الرسائل الجديدة ستظهر تلقائياً</div>'; return; }
   // بانتظار الرد أولاً: آخر رسالة فعلية من العميل (وارد) تتصدر القائمة
-  const awaits = c => c.last_non_activity_message?.message_type === 0;
+  const awaits = isWaiting;
   let pool = conversations;
-  if(currentFilter==='unread') pool = pool.filter(c=>(c.unread_count||0)>0);
+  if(currentFilter==='waiting') pool = pool.filter(awaits);
+  else if(currentFilter==='unread') pool = pool.filter(c=>(c.unread_count||0)>0);
   else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }

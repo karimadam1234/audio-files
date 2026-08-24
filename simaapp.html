@@ -198,7 +198,7 @@
   <!-- ===== قائمة المحادثات ===== -->
   <div class="screen" id="listScreen">
     <div class="topbar">
-      <div class="title">Sima Chat</div>
+      <div class="title">Sima Chat <span id="appVer" style="font-size:10px;opacity:.6;font-weight:400"></span></div>
       <button class="icon-btn" id="searchBtn" title="بحث">🔍</button>
       <button class="icon-btn" id="refreshBtn" title="تحديث">⟳</button>
       <button class="icon-btn" id="logoutBtn" title="خروج">⎋</button>
@@ -368,6 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
+const APP_VER = 'v25-08-a';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -395,6 +396,7 @@ let listTimer = null, chatTimer = null;
 
 /* ---------- أدوات ---------- */
 const $ = id => document.getElementById(id);
+document.addEventListener('DOMContentLoaded', ()=>{ const v = document.getElementById('appVer'); if(v) v.textContent = APP_VER; });
 const esc = s => (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 function fmtTime(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleTimeString('ar-MA',{hour:'2-digit',minute:'2-digit'}); }
@@ -483,6 +485,14 @@ function applyRoleUI(){
   const allTab = document.querySelector('.tab[data-tab="all"]');
   allTab.style.display = isAdmin ? '' : 'none';
   $('inboxBar').style.display = isAdmin ? '' : 'none';   // شريط الصناديق/الفرز للمدير فقط
+  // تبويب المراجعة «ينتظر رداً» للمدير وحده — والموظفة تبقى على «غير مقروءة»
+  document.querySelector('.f-chip[data-f="waiting"]').style.display = isAdmin ? '' : 'none';
+  document.querySelector('.f-chip[data-f="unread"]').style.display = isAdmin ? 'none' : '';
+  if(!isAdmin && currentFilter === 'waiting'){
+    currentFilter = 'all';
+    document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
+    document.querySelector('.f-chip[data-f="all"]').classList.add('active');
+  }
   if(!isAdmin){
     currentTab = 'me';
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));

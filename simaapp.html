@@ -76,6 +76,8 @@
   .f-chip.active{background:#D1F4E8;color:var(--wa-green-dark);border-color:var(--wa-green)}
   .fav-star{cursor:pointer;font-size:16px;line-height:1;opacity:.35}
   .fav-star.on{opacity:1}
+  .skip-btn{cursor:pointer;font-size:14px;line-height:1;margin-top:6px;background:#E8F5EE;color:var(--wa-green-dark);
+            border:1px solid var(--wa-green);border-radius:12px;padding:3px 9px;font-weight:700}
 
   /* ===== قائمة المحادثات ===== */
   .conv-list{flex:1;overflow-y:auto;background:#fff}
@@ -548,16 +550,44 @@ $('convList').addEventListener('scroll', ()=>{
     convPage++; loadConversations(false);
   }
 });
-/* عند تفعيل فلتر محلي (غير مقروءة/مفضلة/وسم): املأ تلقائياً حتى تكتمل النتائج */
+/* جلب صفحة واحدة بعينها — يُستعمل للتحميل المتوازي */
+async function fetchConvPage(p){
+  if(agentView){
+    return api('/conversations/filter?page='+p, {
+      method: 'POST',
+      body: JSON.stringify({ payload: [
+        { attribute_key: 'status', filter_operator: 'equal_to', values: ['open'], query_operator: 'AND' },
+        { attribute_key: 'assignee_id', filter_operator: 'equal_to', values: [agentView], query_operator: null }
+      ] })
+    });
+  }
+  const assigneeType = currentTab==='me' ? 'me' : currentTab==='unassigned' ? 'unassigned' : 'all';
+  return api('/conversations?status=open&assignee_type='+assigneeType+'&sort_by='+currentSort+'&page='+p);
+}
+/* عند تفعيل فلتر محلي (ينتظر رداً/غير مقروءة/مفضلة/وسم): املأ تلقائياً حتى تكتمل النتائج.
+   ثلاث صفحات في الطلب الواحد — كان التحميل صفحة تلو الأخرى فيبدو بطيئاً جداً على آلاف المحادثات. */
+const PAGE_CHUNK = 3;
 async function fillForFilter(){
-  let guard = 0;
   const seq = viewSeq;
-  // في وضع المراقبة الصفحات ثقيلة (آلاف المحادثات) — نكتفي بـ6 صفحات ونضع + للباقي
-  const maxPages = agentView ? 6 : 40;
-  while(convHasMore && !convLoading && guard < maxPages && !$('chatScreen').classList.contains('active')){
+  const maxPages = agentView ? 12 : 45;
+  let done = 0;
+  while(convHasMore && done < maxPages && !$('chatScreen').classList.contains('active')){
     if(seq !== viewSeq) return;   // تبدّل العرض — أوقف الملء القديم فوراً
-    guard++; convPage++;
-    await loadConversations(false);
+    const pages = [];
+    for(let i=0; i<PAGE_CHUNK; i++) pages.push(++convPage);
+    done += PAGE_CHUNK;
+    const results = await Promise.all(pages.map(p => fetchConvPage(p).catch(()=>null)));
+    if(seq !== viewSeq) return;
+    if($('chatScreen').classList.contains('active')) return;
+    const seen = new Set(conversations.map(c=>c.id));
+    let lastLen = 0;
+    for(const d of results){
+      const page = d?.data?.payload || d?.payload || [];
+      lastLen = page.length;
+      for(const c of page){ if(!seen.has(c.id)){ seen.add(c.id); conversations.push(c); } }
+    }
+    convHasMore = lastLen >= 25;
+    renderList(true);
   }
 }
 /* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر محلي نشط تُجلب كل الصفحات */
@@ -664,6 +694,7 @@ function renderList(append=false){
       + '<div class="conv-side"><div class="conv-time'+(unread?' hot':'')+'">'+fmtListTime(ts)+'</div>'
       + (unread?'<div class="badge">'+unread+'</div>':'')
       + '<span class="fav-star'+(favs.has(c.id)?' on':'')+'" data-fav="'+c.id+'">⭐</span>'
+      + (currentFilter==='waiting' ? '<span class="skip-btn" data-skip="'+c.id+'" title="لا يستحق رداً — إغلاق">✓</span>' : '')
       + '</div></div>';
   }).join('') + (convHasMore && currentFilter==='all' ? '<div style="text-align:center;padding:14px;color:var(--wa-ink-2);font-size:13px">جارٍ تحميل المزيد…</div>' : '');
   el.querySelectorAll('.conv').forEach(d=>{
@@ -681,6 +712,11 @@ function renderList(append=false){
     d.addEventListener('touchstart', ()=>{ cpt=setTimeout(openConvSheet,550); }, {passive:true});
     d.addEventListener('touchend', ()=>clearTimeout(cpt));
     d.addEventListener('touchmove', ()=>clearTimeout(cpt));
+  });
+  // زر ✓ في تبويب «ينتظر رداً»: يخرج المحادثة من الانتظار فوراً بلا فتحها (لمن لا يستحق رداً)
+  el.querySelectorAll('.skip-btn').forEach(b=> b.onclick = e=>{
+    e.stopPropagation();
+    resolveFromList(+b.dataset.skip, false);
   });
   el.querySelectorAll('.fav-star').forEach(st=> st.onclick = e=>{
     e.stopPropagation();
@@ -1293,6 +1329,31 @@ $('convFav').onclick = ()=>{
   saveFavs(); renderList();
   toast(favs.has(selConvId) ? 'أُضيفت للمفضلة ⭐' : 'أُزيلت من المفضلة');
 };
+/* حل المحادثة من القائمة مباشرة — يستعمله زر ✓ في تبويب «ينتظر رداً» وورقة الخيارات */
+async function resolveFromList(id, ask){
+  if(ask && !confirm('حل المحادثة وإخفاؤها من قائمة «فتح»؟\n(لا تُحذف نهائياً — تعود تلقائياً إن راسل العميل مجدداً)')) return;
+  try{
+    await api('/conversations/'+id+'/toggle_status',{method:'POST'});
+    const listEl = $('convList');
+    const keepPos = listEl.scrollTop;
+    const rowEl = listEl.querySelector('.conv[data-id="'+id+'"]');
+    const anchorId = rowEl?.nextElementSibling?.dataset?.id || rowEl?.previousElementSibling?.dataset?.id || null;
+    conversations = conversations.filter(c=>c.id!==id);
+    if(agentTotal != null && agentTotal > 0) agentTotal--;
+    // خصم فوري من عدّاد الخادم حتى لا ينتظر المستخدم دورة التحديث
+    if(waitStats){
+      if(waitStats.total > 0) waitStats.total--;
+      const k = String(agentView || (currentTab==='me' ? ME?.id : ''));
+      if(waitStats.agents && waitStats.agents[k] > 0) waitStats.agents[k]--;
+      else if(currentTab==='unassigned' && waitStats.unassigned > 0) waitStats.unassigned--;
+    }
+    renderList();
+    const anchorEl = anchorId ? listEl.querySelector('.conv[data-id="'+anchorId+'"]') : null;
+    if(anchorEl) listEl.scrollTop += anchorEl.getBoundingClientRect().top - listEl.getBoundingClientRect().top - listEl.clientHeight/2 + anchorEl.clientHeight/2;
+    else listEl.scrollTop = keepPos;
+    toast('حُلّت المحادثة ✓');
+  }catch(e){ toast('تعذّر تنفيذ العملية'); }
+}
 $('convResolve').onclick = async ()=>{
   closeSheets();
   if(!confirm('حل المحادثة وإخفاؤها من قائمة «فتح»؟\n(لا تُحذف نهائياً — تعود تلقائياً إن راسل العميل مجدداً)')) return;

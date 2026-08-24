@@ -537,6 +537,7 @@ async function loadConversations(reset=true, force=false){
       $('cntUn').textContent = meta.unassigned_count ?? '';
     }
     renderList(!reset);
+    refreshWaitStats();
   }catch(e){ /* صمت أثناء الاستطلاع */ }
   finally{ if(my === convReq) convLoading = false; }
 }
@@ -568,6 +569,28 @@ async function reloadForCurrentView(){
 /* «ينتظر رداً»: آخر رسالة فعلية في المحادثة من العميل — مستقل تماماً عن حالة القراءة،
    فلا تختفي محادثة لمجرد أن أحداً فتحها دون أن يرد. هو معيار التبويب الدائم والعدّاد. */
 const isWaiting = c => c.last_non_activity_message?.message_type === 0;
+/* العدّاد الدقيق يأتي من الخادم دفعة واحدة (استعلام واحد على قاعدة البيانات) —
+   بدل انتظار تحميل مئات الصفحات في المتصفح. يُحدَّث كل دقيقة على الأكثر. */
+const WAIT_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting';
+let waitStats = null, waitStatsAt = 0;
+async function refreshWaitStats(force){
+  if(!force && Date.now() - waitStatsAt < 60000) return;
+  waitStatsAt = Date.now();
+  try{
+    const r = await fetch(WAIT_API, { cache: 'no-store' });
+    if(!r.ok) return;
+    const j = await r.json();
+    if(j && typeof j.total === 'number'){ waitStats = j; updateFilterCounts(); }
+  }catch(e){ /* الواجهة اختيارية — عند تعذّرها نعود للعدّ المحلي */ }
+}
+/* أي رقم يخص العرض الحالي: موظفة مراقَبة / محادثاتي / غير معيّن / الكل */
+function waitCountForView(){
+  if(!waitStats) return null;
+  if(agentView) return Number(waitStats.agents?.[String(agentView)] || 0);
+  if(currentTab === 'me') return Number(waitStats.agents?.[String(ME?.id)] || 0);
+  if(currentTab === 'unassigned') return Number(waitStats.unassigned || 0);
+  return Number(waitStats.total || 0);
+}
 /* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + كم منها ينتظر ردها */
 function updateFilterCounts(){
   const on = agentView && ME?.role === 'administrator';
@@ -583,8 +606,22 @@ function updateFilterCounts(){
   $('fCntUnread').textContent = on ? ' ('+waiting+(convHasMore?'+':'')+')' : '';
   $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
   // عدّاد «ينتظر رداً» — للجميع (موظفة أو مدير)، بلا حد زمني: التراكم القديم يجب أن يظهر
-  const wait = conversations.filter(isWaiting).length;
-  $('fCntWait').textContent = wait ? ' ('+wait+(convHasMore?'+':'')+')' : '';
+  // الرقم من الخادم دقيق وفوري؛ وعند تعذّره نعرض العدّ المحلي مع + للدلالة على النقص
+  const srv = waitCountForView();
+  const wait = srv !== null ? srv : conversations.filter(isWaiting).length;
+  $('fCntWait').textContent = wait ? ' ('+wait+(srv === null && convHasMore ? '+' : '')+')' : '';
+  // المدير لا تعنيه «غير مقروءة» — فتحه للمحادثة يُعلّمها مقروءة فيضلّله الرقم.
+  // يبقى له «ينتظر رداً»، وفي وضع مراقبة موظفة يظهر أيضاً «بانتظار الرد» (آخر 24 ساعة).
+  const unreadChip = document.querySelector('.f-chip[data-f="unread"]');
+  if(unreadChip){
+    const hideUnread = ME?.role === 'administrator' && !agentView;
+    unreadChip.style.display = hideUnread ? 'none' : '';
+    if(hideUnread && currentFilter === 'unread'){
+      currentFilter = 'all';
+      document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
+      document.querySelector('.f-chip[data-f="all"]').classList.add('active');
+    }
+  }
 }
 /* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
 function searchActive(){ return $('searchInput').value.trim().length >= 2; }
@@ -685,6 +722,7 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');
   renderList();
+  if(f==='waiting') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
   if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
 });
 function startListPolling(){

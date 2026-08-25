@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-f';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-g';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -494,6 +494,7 @@ function applyRoleUI(){
     document.querySelector('.f-chip[data-f="all"]').classList.add('active');
   }
   if(!isAdmin){
+    currentSort = 'latest';   // الموظفة: الأحدث نشاطاً أولاً — الرسالة الجديدة تصعد للأعلى كواتساب
     currentTab = 'me';
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelector('.tab[data-tab="me"]').classList.add('active');
@@ -738,7 +739,11 @@ function renderList(append=false){
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }
   // في وضع المراقبة: نحافظ على ترتيب الخادم كما هو — إعادة الفرز كانت تحرّك المحتوى مع كل صفحة تُحمَّل فيقفز الموضع
-  const sorted = agentView ? pool : pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
+  // الموظفة: غير المقروء أولاً ثم الأحدث نشاطاً (كواتساب) — المدير: بانتظار الرد أولاً — المراقبة: ترتيب الخادم
+  const hasUnread = c => (c.unread_count||0) > 0;
+  const sorted = agentView ? pool
+    : (ME?.role !== 'administrator') ? pool.filter(hasUnread).concat(pool.filter(c=>!hasUnread(c)))
+    : pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
   // المثبتة تتصدر كل شيء (خارج وضع المراقبة)
   const finalList = agentView ? sorted : sorted.filter(c=>pins.has(c.id)).concat(sorted.filter(c=>!pins.has(c.id)));
   el.innerHTML = finalList.map(c=>{
@@ -811,6 +816,7 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
       if(!t){ filterLabel=null; chip.textContent='🏷 الوسوم'; currentFilter='all';
         document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
         document.querySelector('.f-chip[data-f="all"]').classList.add('active');
+        if(!convHasMore && conversations.length < 30){ reloadForCurrentView(); return; }
         renderList(); return; }
       filterLabel = t; chip.textContent = '🏷 '+t;
       currentFilter = 'label';
@@ -822,13 +828,15 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
     return;
   }
   filterLabel=null; document.querySelector('.f-chip[data-f="label"]').textContent='🏷 الوسوم';
+  const wasServerList = adminListMode() && !convHasMore;   // كنا في تبويب محمّل من الخادم (قائمة جزئية)
   currentFilter = f; viewSeq++;
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');
-  renderList();
   if(f==='waiting' || f==='unread') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
-  if(adminListMode()) loadWaitingList();   // للمدير: القائمة جاهزة من الخادم
-  else if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
+  if(adminListMode()){ loadWaitingList(); return; }   // القائمة جاهزة من الخادم
+  if(wasServerList){ $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView(); return; }   // عودة إلى القائمة الكاملة
+  renderList();
+  if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
 });
 function startListPolling(){
   clearInterval(listTimer);

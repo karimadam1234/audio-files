@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-c';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-d';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -487,7 +487,7 @@ function applyRoleUI(){
   $('inboxBar').style.display = isAdmin ? '' : 'none';   // شريط الصناديق/الفرز للمدير فقط
   // تبويب المراجعة «ينتظر رداً» للمدير وحده — والموظفة تبقى على «غير مقروءة»
   document.querySelector('.f-chip[data-f="waiting"]').style.display = isAdmin ? '' : 'none';
-  document.querySelector('.f-chip[data-f="unread"]').style.display = isAdmin ? 'none' : '';
+  document.querySelector('.f-chip[data-f="unread"]').style.display = '';   // للمدير «بانتظار الرد» وللموظفة «غير مقروءة»
   if(!isAdmin && currentFilter === 'waiting'){
     currentFilter = 'all';
     document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
@@ -609,8 +609,11 @@ async function reloadForCurrentView(){
 /* «ينتظر رداً»: آخر رسالة فعلية في المحادثة من العميل — مستقل تماماً عن حالة القراءة،
    فلا تختفي محادثة لمجرد أن أحداً فتحها دون أن يرد. هو معيار التبويب الدائم والعدّاد. */
 const isWaiting = c => c.last_non_activity_message?.message_type === 0;
-/* «بانتظار الرد» (وضع مراقبة الموظفة): آخر رسالة من العميل خلال آخر 24 ساعة — نفس المعيار للعدّاد والقائمة */
-const isWaiting24 = c => { const m = c.last_non_activity_message; return !!m && m.message_type === 0 && Number(m.created_at||0) >= Date.now()/1000 - 86400; };
+/* للمدير — فصل واضح بين حالتين (نفس المعيار للعدّاد والقائمة):
+   «بانتظار الرد»  = آخر رسالة من العميل ولم تُقرأ بعد (عليها إشعار) — عمل الموظفة الطبيعي.
+   «ينتظر رداً»    = آخر رسالة من العميل وقُرئت ولم يُرد عليها — تحتاج مراجعة المدير. */
+const isWaitingUnread = c => isWaiting(c) && (c.unread_count||0) > 0;
+const isWaitingRead   = c => isWaiting(c) && !((c.unread_count||0) > 0);
 /* العدّاد الدقيق يأتي من الخادم دفعة واحدة (استعلام واحد على قاعدة البيانات) —
    بدل انتظار تحميل مئات الصفحات في المتصفح. يُحدَّث كل دقيقة على الأكثر. */
 const WAIT_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting';
@@ -640,31 +643,34 @@ function statForView(key){
 function waitCountForView(){ return statForView('waiting'); }
 /* عدادات وضع المراقبة (للمدير فقط): إجمالي المسند للموظفة + كم منها ينتظر ردها */
 function updateFilterCounts(){
-  const on = agentView && ME?.role === 'administrator';
+  const isAdmin = ME?.role === 'administrator';
+  const on = agentView && isAdmin;
   const total = (agentTotal ?? conversations.length);
   $('fCntAll').textContent = on ? ' ('+total+')' : '';
-  // «ينتظر اليوم» = آخر رسالة من العميل خلال آخر 24 ساعة فقط. التراكم القديم ليس عمل اليوم
-  // فلا يُحتسب هنا (يبقى ضمن رقم «الكل»)، والمؤشر لا يتأثر بمن فتح المحادثة.
-  // الرقم الدقيق من الخادم (waiting24)؛ وعند تعذّره العدّ المحلي مع + للدلالة على النقص
-  const w24Srv = statForView('waiting24');
-  const waiting = w24Srv !== null ? w24Srv : conversations.filter(isWaiting24).length;
-  // عدّاد «غير مقروءة» للموظفة: رقم دقيق من الخادم (كل محادثاتها لا الصفحات المحمّلة فقط)
-  const unSrv = statForView('unread');
-  const unLocal = conversations.filter(c=>(c.unread_count||0) > 0).length;
-  const unShown = unSrv !== null ? unSrv : unLocal;
-  $('fCntUnread').textContent = on
-    ? (waiting ? ' ('+waiting+(w24Srv === null && convHasMore ? '+' : '')+')' : '')
-    : (unShown ? ' ('+unShown+(unSrv === null && convHasMore ? '+' : '')+')' : '');
-  $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
-  // عدّاد «ينتظر رداً» — للجميع (موظفة أو مدير)، بلا حد زمني: التراكم القديم يجب أن يظهر
-  // الرقم من الخادم دقيق وفوري؛ وعند تعذّره نعرض العدّ المحلي مع + للدلالة على النقص
-  const srv = waitCountForView();
-  const wait = srv !== null ? srv : conversations.filter(isWaiting).length;
-  $('fCntWait').textContent = wait ? ' ('+wait+(srv === null && convHasMore ? '+' : '')+')' : '';
+  // الأرقام من الخادم دقيقة (كل المحادثات لا الصفحات المحمّلة فقط)؛ وعند تعذّرها عدّ محلي مع +
+  const unSrv = statForView('unread');          // ينتظر + غير مقروء
+  const allSrv = waitCountForView();            // كل من ينتظر
+  const plus = convHasMore ? '+' : '';
+  if(isAdmin){
+    // «بانتظار الرد» = ينتظر وعليه إشعار
+    const wu = unSrv !== null ? unSrv : conversations.filter(isWaitingUnread).length;
+    $('fCntUnread').textContent = wu ? ' ('+wu+(unSrv === null ? plus : '')+')' : '';
+    $('fLblUnread').textContent = 'بانتظار الرد';
+    // «ينتظر رداً» = ينتظر وقُرئ بلا رد (مراجعة المدير)
+    const wr = (allSrv !== null && unSrv !== null) ? Math.max(0, allSrv - unSrv) : conversations.filter(isWaitingRead).length;
+    $('fCntWait').textContent = wr ? ' ('+wr+((allSrv === null || unSrv === null) ? plus : '')+')' : '';
+  }else{
+    // الموظفة: «غير مقروءة» كما اعتادت
+    const unLocal = conversations.filter(c=>(c.unread_count||0) > 0).length;
+    const unShown = unSrv !== null ? unSrv : unLocal;
+    $('fCntUnread').textContent = unShown ? ' ('+unShown+(unSrv === null ? plus : '')+')' : '';
+    $('fLblUnread').textContent = 'غير مقروءة';
+    const wait = allSrv !== null ? allSrv : conversations.filter(isWaiting).length;
+    $('fCntWait').textContent = wait ? ' ('+wait+(allSrv === null ? plus : '')+')' : '';
+  }
   // توزيع التبويبات حسب الدور:
   // المدير  → «ينتظر رداً» (للمراجعة وفهم سبب عدم الرد)، ولا «غير مقروءة» لأن فتحه للمحادثة يُعلّمها مقروءة.
   // الموظفة → «غير مقروءة» فقط كما اعتادت — بلا «ينتظر رداً» وبلا زر الإغلاق السريع.
-  const isAdmin = ME?.role === 'administrator';
   const setChip = (f, show) => {
     const chip = document.querySelector('.f-chip[data-f="'+f+'"]');
     if(!chip) return;
@@ -676,7 +682,7 @@ function updateFilterCounts(){
     }
   };
   setChip('waiting', isAdmin);
-  setChip('unread', !isAdmin || !!agentView);
+  setChip('unread', true);   // للمدير «بانتظار الرد»، وللموظفة «غير مقروءة»
 }
 /* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
 function searchActive(){ return $('searchInput').value.trim().length >= 2; }
@@ -689,8 +695,9 @@ function renderList(append=false){
   // بانتظار الرد أولاً: آخر رسالة فعلية من العميل (وارد) تتصدر القائمة
   const awaits = isWaiting;
   let pool = conversations;
-  if(currentFilter==='waiting') pool = pool.filter(awaits);
-  else if(currentFilter==='unread') pool = pool.filter(agentView && ME?.role === 'administrator' ? isWaiting24 : (c=>(c.unread_count||0)>0));
+  const adminMode = ME?.role === 'administrator';
+  if(currentFilter==='waiting') pool = pool.filter(adminMode ? isWaitingRead : awaits);
+  else if(currentFilter==='unread') pool = pool.filter(adminMode ? isWaitingUnread : (c=>(c.unread_count||0)>0));
   else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }

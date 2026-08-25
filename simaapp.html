@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-d';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-e';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -602,6 +602,7 @@ async function fillForFilter(){
 }
 /* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر محلي نشط تُجلب كل الصفحات */
 async function reloadForCurrentView(){
+  if(adminListMode()){ await loadWaitingList(); return; }   // قائمة الانتظار تأتي جاهزة من الخادم
   await loadConversations(true, true);   // طلب المستخدم يتجاوز أي طلب بطيء جارٍ
   // وضع المراقبة لا يملأ كل الصفحات: الترتيب من الخادم يضع الأقدم انتظاراً أولاً، والباقي بالتمرير
   if(currentFilter !== 'all') await fillForFilter();
@@ -614,6 +615,34 @@ const isWaiting = c => c.last_non_activity_message?.message_type === 0;
    «ينتظر رداً»    = آخر رسالة من العميل وقُرئت ولم يُرد عليها — تحتاج مراجعة المدير. */
 const isWaitingUnread = c => isWaiting(c) && (c.unread_count||0) > 0;
 const isWaitingRead   = c => isWaiting(c) && !((c.unread_count||0) > 0);
+/* تبويبا المدير يُحمَّلان مباشرة من الخادم (استعلام واحد) بدل تصفح آلاف المحادثات صفحةً صفحة */
+const WAIT_LIST_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting-list';
+function adminListMode(){ return ME?.role === 'administrator' && (currentFilter === 'waiting' || currentFilter === 'unread'); }
+async function loadWaitingList(){
+  const seq = viewSeq;
+  const agent = agentView ? String(agentView) : currentTab === 'me' ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
+  const kind = currentFilter === 'unread' ? 'unread' : 'read';
+  $('convList').innerHTML = '<div class="spin"></div>';
+  try{
+    const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=' + kind + '&t=' + Date.now(), { cache: 'no-store' });
+    if(!r.ok) throw 0;
+    const rows = await r.json();
+    if(seq !== viewSeq || !adminListMode()) return;
+    conversations = (rows || []).map(x => ({
+      id: x.id, assignee_id: x.assignee_id, unread_count: x.unread ? 1 : 0, labels: x.labels || [],
+      timestamp: x.last_at, last_activity_at: x.last_at,
+      meta: { sender: { name: x.name, phone_number: x.phone } },
+      last_non_activity_message: { message_type: 0, content: x.content, created_at: x.last_at, attachments: x.has_att ? [{}] : [] }
+    }));
+    convHasMore = false;
+    renderList();
+    refreshWaitStats(true);
+  }catch(e){
+    if(seq !== viewSeq) return;
+    await loadConversations(true, true);   // احتياط: الطريقة القديمة (تصفح الصفحات)
+    await fillForFilter();
+  }
+}
 /* العدّاد الدقيق يأتي من الخادم دفعة واحدة (استعلام واحد على قاعدة البيانات) —
    بدل انتظار تحميل مئات الصفحات في المتصفح. يُحدَّث كل دقيقة على الأكثر. */
 const WAIT_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting';
@@ -791,7 +820,8 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
   ch.classList.add('active');
   renderList();
   if(f==='waiting' || f==='unread') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
-  if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
+  if(adminListMode()) loadWaitingList();   // للمدير: القائمة جاهزة من الخادم
+  else if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
 });
 function startListPolling(){
   clearInterval(listTimer);
@@ -1384,6 +1414,7 @@ async function resolveFromList(id, ask){
     if(anchorEl) listEl.scrollTop += anchorEl.getBoundingClientRect().top - listEl.getBoundingClientRect().top - listEl.clientHeight/2 + anchorEl.clientHeight/2;
     else listEl.scrollTop = keepPos;
     toast('حُلّت المحادثة ✓');
+    refreshWaitStats(true);   // تحديث العدّادين من الخادم
   }catch(e){ toast('تعذّر تنفيذ العملية'); }
 }
 $('convResolve').onclick = async ()=>{

@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-g';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-h';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -1085,6 +1085,10 @@ $('fileInputDoc').addEventListener('change', ()=>onFilesChosen($('fileInputDoc')
 async function onFilesChosen(inp){
   const files = Array.from(inp.files || []);
   if(!files.length || !currentConv) return;
+  // نثبّت المحادثة الهدف لحظة الاختيار — التنقل أثناء الرفع لا يحوّل المرفقات لعميل آخر ولا يقطعها
+  const convId = currentConv.id;
+  const convName = currentConv.meta?.sender?.name || ('#'+convId);
+  const stillHere = ()=> currentConv && currentConv.id === convId;
   // فحص أحجام كل الملفات قبل البدء — لا نرسل نصف الدفعة ثم نكتشف ملفاً كبيراً
   for(const f of files){
     const cat = waCategory(f);
@@ -1109,32 +1113,31 @@ async function onFilesChosen(inp){
         fd.append('message_type','outgoing');
         if(replyTo && i===0) fd.append('content_attributes[in_reply_to]', replyTo.id);   // الاقتباس على الأول فقط
         if(cap && i===0) fd.append('content', cap);                                       // النص المكتوب مع الأول فقط
-        try{ await uploadAttachmentXHR(fd, label); ok = true; }
+        try{ await uploadAttachmentXHR(fd, label, convId); ok = true; }
         catch(e){ lastErr = e; }
       }
       if(!ok) throw lastErr;
       sent++;
     }
-    inputEl.value=''; inputEl.style.height='auto';
-    cancelReply();
-    toast(files.length>1 ? 'أُرسلت '+sent+' مرفقات ✓' : 'أُرسل المرفق ✓');
-    await refreshChat(true);
+    if(stillHere()){ inputEl.value=''; inputEl.style.height='auto'; cancelReply(); }
+    toast((files.length>1 ? 'أُرسلت '+sent+' مرفقات ✓' : 'أُرسل المرفق ✓') + (stillHere() ? '' : ' إلى '+convName));
+    if(stillHere()) await refreshChat(true);
   }catch(e){
     const msg = (e && e.message) ? e.message : 'خطأ غير معروف';
     const nice = msg==='NETWORK' ? 'انقطعت الشبكة 3 مرات — ابقي داخل التطبيق والشاشة مضاءة حتى يكتمل الرفع'
                : msg==='TIMEOUT' ? 'الاتصال بطيء جداً — جرّبي على Wi-Fi أو قرب النافذة'
                : msg;
     toast('تعذّر المرفق '+(sent+1)+(files.length>1?' من '+files.length:'')+' — ' + nice);
-    if(sent) await refreshChat(true);   // ما أُرسل قبل الانقطاع يظهر في المحادثة
+    if(sent && stillHere()) await refreshChat(true);   // ما أُرسل قبل الانقطاع يظهر في المحادثة
   }
   finally{ inp.value=''; }
 }
 
 /* رفع مرفق عبر XHR مع نسبة تقدم — الهواتف تقطع الرفع عند الخروج من الشاشة، فالنسبة تُبقي الموظفة منتظرة */
-function uploadAttachmentXHR(fd, label){
+function uploadAttachmentXHR(fd, label, convId){
   return new Promise((resolve, reject)=>{
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages');
+    xhr.open('POST', BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+convId+'/messages');
     xhr.setRequestHeader('api_access_token', TOKEN);
     xhr.timeout = 180000;   // 3 دقائق كحد أقصى للملف الواحد
     let lastPct = -10;
@@ -1203,6 +1206,8 @@ $('micBtn').onclick = async ()=>{
              : MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
   recorder = new MediaRecorder(recStream, mime?{mimeType:mime}:{});
   recChunks=[]; recSecs=0; recSendOnStop=false;
+  const voiceConvId = currentConv.id;   // الهدف يُثبَّت عند بدء التسجيل
+  const voiceConvName = currentConv.meta?.sender?.name || ('#'+voiceConvId);
   recorder.ondataavailable = e=>{ if(e.data.size) recChunks.push(e.data); };
   recorder.onstop = async ()=>{
     recStream.getTracks().forEach(t=>t.stop());
@@ -1224,12 +1229,14 @@ $('micBtn').onclick = async ()=>{
       fd.append('attachments[]', blob, 'voice-'+Date.now()+'.mp3');
       fd.append('message_type','outgoing');
       if(replyTo) fd.append('content_attributes[in_reply_to]', replyTo.id);   // رد صوتي على رسالة محددة
-      const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+currentConv.id+'/messages',{
+      const res = await fetch(BASE+'/api/v1/accounts/'+ACCOUNT_ID+'/conversations/'+voiceConvId+'/messages',{
         method:'POST', headers:{'api_access_token':TOKEN}, body:fd
       });
       if(!res.ok) throw 0;
-      cancelReply();
-      toast('أُرسلت الرسالة الصوتية ✓'); await refreshChat(true);
+      const same = currentConv && currentConv.id === voiceConvId;
+      if(same) cancelReply();
+      toast('أُرسلت الرسالة الصوتية ✓' + (same ? '' : ' إلى '+voiceConvName));
+      if(same) await refreshChat(true);
     }catch(e){ toast('تعذّر إرسال الصوت'); }
   };
   recorder.start();

@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-b';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-c';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -579,7 +579,7 @@ async function fetchConvPage(p){
 const PAGE_CHUNK = 3;
 async function fillForFilter(){
   const seq = viewSeq;
-  const maxPages = agentView ? 12 : 45;
+  const maxPages = agentView ? 24 : 45;
   let done = 0;
   while(convHasMore && done < maxPages && !$('chatScreen').classList.contains('active')){
     if(seq !== viewSeq) return;   // تبدّل العرض — أوقف الملء القديم فوراً
@@ -609,6 +609,8 @@ async function reloadForCurrentView(){
 /* «ينتظر رداً»: آخر رسالة فعلية في المحادثة من العميل — مستقل تماماً عن حالة القراءة،
    فلا تختفي محادثة لمجرد أن أحداً فتحها دون أن يرد. هو معيار التبويب الدائم والعدّاد. */
 const isWaiting = c => c.last_non_activity_message?.message_type === 0;
+/* «بانتظار الرد» (وضع مراقبة الموظفة): آخر رسالة من العميل خلال آخر 24 ساعة — نفس المعيار للعدّاد والقائمة */
+const isWaiting24 = c => { const m = c.last_non_activity_message; return !!m && m.message_type === 0 && Number(m.created_at||0) >= Date.now()/1000 - 86400; };
 /* العدّاد الدقيق يأتي من الخادم دفعة واحدة (استعلام واحد على قاعدة البيانات) —
    بدل انتظار تحميل مئات الصفحات في المتصفح. يُحدَّث كل دقيقة على الأكثر. */
 const WAIT_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting';
@@ -626,9 +628,9 @@ async function refreshWaitStats(force){
 /* أي رقم يخص العرض الحالي: موظفة مراقَبة / محادثاتي / غير معيّن / الكل */
 function statForView(key){
   if(!waitStats) return null;
-  const map = key === 'unread' ? waitStats.unread : waitStats.agents;
-  const tot = key === 'unread' ? waitStats.unread_total : waitStats.total;
-  const un  = key === 'unread' ? waitStats.unread_unassigned : waitStats.unassigned;
+  const map = key === 'unread' ? waitStats.unread : key === 'waiting24' ? waitStats.waiting24 : waitStats.agents;
+  const tot = key === 'unread' ? waitStats.unread_total : key === 'waiting24' ? waitStats.waiting24_total : waitStats.total;
+  const un  = key === 'unread' ? waitStats.unread_unassigned : key === 'waiting24' ? waitStats.waiting24_unassigned : waitStats.unassigned;
   if(tot === undefined) return null;   // نسخة قديمة من الواجهة — نعود للعدّ المحلي
   if(agentView) return Number(map?.[String(agentView)] || 0);
   if(currentTab === 'me') return Number(map?.[String(ME?.id)] || 0);
@@ -643,17 +645,15 @@ function updateFilterCounts(){
   $('fCntAll').textContent = on ? ' ('+total+')' : '';
   // «ينتظر اليوم» = آخر رسالة من العميل خلال آخر 24 ساعة فقط. التراكم القديم ليس عمل اليوم
   // فلا يُحتسب هنا (يبقى ضمن رقم «الكل»)، والمؤشر لا يتأثر بمن فتح المحادثة.
-  const dayAgo = Date.now()/1000 - 86400;
-  const waiting = conversations.filter(c=>{
-    const m = c.last_non_activity_message;
-    return m && m.message_type === 0 && Number(m.created_at||0) >= dayAgo;
-  }).length;
+  // الرقم الدقيق من الخادم (waiting24)؛ وعند تعذّره العدّ المحلي مع + للدلالة على النقص
+  const w24Srv = statForView('waiting24');
+  const waiting = w24Srv !== null ? w24Srv : conversations.filter(isWaiting24).length;
   // عدّاد «غير مقروءة» للموظفة: رقم دقيق من الخادم (كل محادثاتها لا الصفحات المحمّلة فقط)
   const unSrv = statForView('unread');
   const unLocal = conversations.filter(c=>(c.unread_count||0) > 0).length;
   const unShown = unSrv !== null ? unSrv : unLocal;
   $('fCntUnread').textContent = on
-    ? ' ('+waiting+(convHasMore?'+':'')+')'
+    ? (waiting ? ' ('+waiting+(w24Srv === null && convHasMore ? '+' : '')+')' : '')
     : (unShown ? ' ('+unShown+(unSrv === null && convHasMore ? '+' : '')+')' : '');
   $('fLblUnread').textContent = on ? 'بانتظار الرد' : 'غير مقروءة';
   // عدّاد «ينتظر رداً» — للجميع (موظفة أو مدير)، بلا حد زمني: التراكم القديم يجب أن يظهر
@@ -690,7 +690,7 @@ function renderList(append=false){
   const awaits = isWaiting;
   let pool = conversations;
   if(currentFilter==='waiting') pool = pool.filter(awaits);
-  else if(currentFilter==='unread') pool = pool.filter(c=>(c.unread_count||0)>0);
+  else if(currentFilter==='unread') pool = pool.filter(agentView && ME?.role === 'administrator' ? isWaiting24 : (c=>(c.unread_count||0)>0));
   else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));
   if(!pool.length){ el.innerHTML = '<div class="empty">لا محادثات مطابقة لهذا الفلتر 🔎</div>'; return; }
@@ -783,7 +783,7 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');
   renderList();
-  if(f==='waiting') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
+  if(f==='waiting' || f==='unread') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
   if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
 });
 function startListPolling(){

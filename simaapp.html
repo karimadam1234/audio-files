@@ -368,7 +368,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-e';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-f';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -617,11 +617,17 @@ const isWaitingUnread = c => isWaiting(c) && (c.unread_count||0) > 0;
 const isWaitingRead   = c => isWaiting(c) && !((c.unread_count||0) > 0);
 /* تبويبا المدير يُحمَّلان مباشرة من الخادم (استعلام واحد) بدل تصفح آلاف المحادثات صفحةً صفحة */
 const WAIT_LIST_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting-list';
-function adminListMode(){ return ME?.role === 'administrator' && (currentFilter === 'waiting' || currentFilter === 'unread'); }
+function adminListMode(){
+  const isAdmin = ME?.role === 'administrator';
+  if(isAdmin) return currentFilter === 'waiting' || currentFilter === 'unread';
+  return currentFilter === 'unread';   // الموظفة: «غير مقروءة» أيضاً من الخادم مباشرة (بدل تصفح مئات الصفحات)
+}
 async function loadWaitingList(){
   const seq = viewSeq;
-  const agent = agentView ? String(agentView) : currentTab === 'me' ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
-  const kind = currentFilter === 'unread' ? 'unread' : 'read';
+  const isAdmin = ME?.role === 'administrator';
+  const agent = agentView ? String(agentView) : (currentTab === 'me' || !isAdmin) ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
+  // المدير: unread = ينتظر وغير مقروء / read = ينتظر وقُرئ — الموظفة: unseen = كل ما فيه رسائل واردة لم تُقرأ (معيار Chatwoot نفسه)
+  const kind = !isAdmin ? 'unseen' : currentFilter === 'unread' ? 'unread' : 'read';
   $('convList').innerHTML = '<div class="spin"></div>';
   try{
     const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=' + kind + '&t=' + Date.now(), { cache: 'no-store' });
@@ -629,10 +635,10 @@ async function loadWaitingList(){
     const rows = await r.json();
     if(seq !== viewSeq || !adminListMode()) return;
     conversations = (rows || []).map(x => ({
-      id: x.id, assignee_id: x.assignee_id, unread_count: x.unread ? 1 : 0, labels: x.labels || [],
+      id: x.id, assignee_id: x.assignee_id, unread_count: x.unread ? Math.max(1, Number(x.unread_count || 1)) : 0, labels: x.labels || [],
       timestamp: x.last_at, last_activity_at: x.last_at,
       meta: { sender: { name: x.name, phone_number: x.phone } },
-      last_non_activity_message: { message_type: 0, content: x.content, created_at: x.last_at, attachments: x.has_att ? [{}] : [] }
+      last_non_activity_message: { message_type: Number(x.mt ?? 0), content: x.content, created_at: x.last_at, attachments: x.has_att ? [{}] : [] }
     }));
     convHasMore = false;
     renderList();
@@ -691,8 +697,9 @@ function updateFilterCounts(){
   }else{
     // الموظفة: «غير مقروءة» كما اعتادت
     const unLocal = conversations.filter(c=>(c.unread_count||0) > 0).length;
-    const unShown = unSrv !== null ? unSrv : unLocal;
-    $('fCntUnread').textContent = unShown ? ' ('+unShown+(unSrv === null ? plus : '')+')' : '';
+    // داخل تبويب «غير مقروءة» القائمة كاملة من الخادم → العدّ المحلي هو الدقيق
+    const unShown = (adminListMode() && !convHasMore) ? unLocal : (unSrv !== null ? unSrv : unLocal);
+    $('fCntUnread').textContent = unShown ? ' ('+unShown+((unSrv === null && convHasMore) ? plus : '')+')' : '';
     $('fLblUnread').textContent = 'غير مقروءة';
     const wait = allSrv !== null ? allSrv : conversations.filter(isWaiting).length;
     $('fCntWait').textContent = wait ? ' ('+wait+(allSrv === null ? plus : '')+')' : '';

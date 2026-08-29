@@ -201,6 +201,7 @@
       <div class="title">Sima Chat <span id="appVer" style="font-size:10px;opacity:.6;font-weight:400"></span></div>
       <button class="icon-btn" id="searchBtn" title="بحث">🔍</button>
       <button class="icon-btn" id="refreshBtn" title="تحديث">⟳</button>
+      <button class="icon-btn" id="statusBtn" title="حالتي">🟢</button>
       <button class="icon-btn" id="logoutBtn" title="خروج">⎋</button>
     </div>
     <div class="search-row" id="searchRow" style="display:none">
@@ -308,6 +309,14 @@
     <div class="row" id="convResolve" style="color:var(--wa-danger)"><div class="ic">🗑</div> حذف من القائمة (حل المحادثة)</div>
   </div>
 
+  <div class="sheet" id="statusSheet">
+    <h3>حالتي في استقبال العملاء الجدد</h3>
+    <div class="row" data-st="online"><div class="ic">🟢</div> متاحة (Online) — أستقبل عملاء جدداً</div>
+    <div class="row" data-st="busy"><div class="ic">🟠</div> مشغولة (Busy) — أوقفوا الجديد مؤقتاً، أكمل محادثاتي</div>
+    <div class="row" data-st="offline"><div class="ic">⚫</div> خارج الدوام (Offline)</div>
+    <p style="font-size:12px;color:var(--wa-ink-2);margin-top:10px;line-height:1.7">تغيير الحالة يؤثر فقط على استقبال محادثات جديدة — محادثاتك الحالية تبقى مسؤوليتك.</p>
+  </div>
+
   <div class="toast" id="toast"></div>
 </div>
 
@@ -368,7 +377,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-h';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-08-i';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -471,6 +480,9 @@ async function tryLogin(){
     const p = await res.json();
     const acc = (p.accounts||[]).find(a=>a.id===ACCOUNT_ID) || {};
     ME = { id: p.id, name: p.name, role: acc.role || 'agent' };
+    myAvailability = acc.availability || acc.availability_status || 'online';
+    if(!['online','busy','offline'].includes(myAvailability)) myAvailability = 'online';
+    renderStatusBtn();
     store.set('sima_token', TOKEN);
     applyRoleUI();
     show('listScreen'); startListPolling(); loadLabels(); loadInboxes();
@@ -509,6 +521,38 @@ function logout(){
 $('loginBtn').onclick = tryLogin;
 $('tokenInput').addEventListener('keydown', e=>{ if(e.key==='Enter') tryLogin(); });
 $('logoutBtn').onclick = ()=>{ if(confirm('تسجيل الخروج؟')) logout(); };
+
+/* ---------- حالة الموظفة: Online / Busy / Offline ---------- */
+let myAvailability = 'online';
+const ST_ICON = { online: '🟢', busy: '🟠', offline: '⚫' };
+const ST_AR = { online: 'متاحة', busy: 'مشغولة', offline: 'خارج الدوام' };
+function renderStatusBtn(){
+  const b = $('statusBtn');
+  if(b){ b.textContent = ST_ICON[myAvailability] || '🟢'; b.title = 'حالتي: ' + (ST_AR[myAvailability] || ''); }
+}
+$('statusBtn').onclick = ()=>{
+  $('statusSheet').querySelectorAll('.row').forEach(r=>{
+    r.style.background = r.dataset.st === myAvailability ? '#D1F4E8' : '';
+  });
+  openSheet('statusSheet');
+};
+$('statusSheet').querySelectorAll('.row').forEach(r=> r.onclick = ()=> setAvailability(r.dataset.st));
+async function setAvailability(st){
+  closeSheets();
+  if(st === myAvailability) return;
+  try{
+    const res = await fetch(BASE + '/api/v1/profile/availability', {
+      method: 'POST',
+      headers: { 'api_access_token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile: { account_id: ACCOUNT_ID, availability: st } })
+    });
+    if(!res.ok) throw 0;
+    myAvailability = st; renderStatusBtn();
+    toast('حالتك الآن: ' + ST_AR[st] + ' ' + ST_ICON[st]);
+    // إعادة تقييم فورية للأهلية في n8n (بدل انتظار دورة الـ5 دقائق)
+    fetch('https://n8n.srv1697902.hstgr.cloud/webhook/sima-rescore', { cache: 'no-store' }).catch(()=>{});
+  }catch(e){ toast('تعذّر تغيير الحالة — حاولي مجدداً'); }
+}
 
 /* ---------- قائمة المحادثات ---------- */
 async function loadConversations(reset=true, force=false){

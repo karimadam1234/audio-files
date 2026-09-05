@@ -246,10 +246,12 @@
       <div class="composer-box">
         <button class="note-toggle" id="noteToggle" title="ملاحظة خاصة">🗒</button>
         <button class="note-toggle" id="attachBtn" title="إرفاق صورة/فيديو/ملف">📎</button>
+        <button class="note-toggle" id="camBtn" title="التقاط صورة بالكاميرا">📷</button>
         <textarea id="msgInput" rows="1" placeholder="اكتبي رسالة"></textarea>
       </div>
       <input type="file" id="fileInput" multiple style="display:none" accept="image/*,video/*">
       <input type="file" id="fileInputDoc" multiple style="display:none" accept="application/pdf,.pdf,.doc,.docx,.xls,.xlsx">
+      <input type="file" id="camInput" style="display:none" accept="image/*" capture="environment">
       <button class="send-btn" id="micBtn" title="رسالة صوتية" style="background:#fff;color:var(--wa-green-dark);box-shadow:0 1px 2px rgba(0,0,0,.08)">🎤</button>
       <button class="send-btn" id="sendBtn">◀</button>
     </div>
@@ -377,7 +379,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-08-i';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-a';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -487,6 +489,9 @@ async function tryLogin(){
     applyRoleUI();
     show('listScreen'); startListPolling(); loadLabels(); loadInboxes();
     if(ME.role === 'administrator') loadAgents();   // شريط المراقبة للمدير فقط
+    // استعادة آخر محادثة كانت مفتوحة قبل إغلاق التطبيق
+    const savedConv = store.get('sima_open_conv');
+    if(savedConv) openConversation(Number(savedConv));
   }catch(e){
     $('loginError').textContent='رمز غير صحيح أو تعذّر الاتصال بالخادم';
   }finally{ $('loginBtn').textContent='دخول'; }
@@ -514,7 +519,7 @@ function applyRoleUI(){
 }
 
 function logout(){
-  store.del('sima_token'); TOKEN=''; ME=null;
+  store.del('sima_token'); store.del('sima_open_conv'); TOKEN=''; ME=null;
   clearInterval(listTimer); clearInterval(chatTimer);
   $('tokenInput').value=''; show('loginScreen');
 }
@@ -941,13 +946,14 @@ async function openConversation(id){
   lastSeenInMsgId = 0; lastMsgsFp = '';
   olderMsgs = []; olderDone = false; olderLoading = false;   // سجل الأقدم يبدأ من جديد لكل محادثة
   if(!(history.state && history.state.s==='chat')) history.pushState({s:'chat'}, '');
+  store.set('sima_open_conv', String(id));   // تذكّر المحادثة المفتوحة — تُستعاد عند إعادة فتح التطبيق
   show('chatScreen');
   await refreshChat(true);
   clearInterval(chatTimer);
   chatTimer = setInterval(()=>refreshChat(false), POLL_CHAT_MS);
 }
 function goList(){
-  clearInterval(chatTimer); currentConv=null; show('listScreen');
+  clearInterval(chatTimer); currentConv=null; store.del('sima_open_conv'); show('listScreen');
   renderList();   // رسم محلي يحافظ على كل الصفحات المحمّلة (لا إعادة تحميل تقفز للأعلى)
   $('convList').scrollTop = savedListScroll;   // العودة لنفس موضع المحادثة التي دخلناها
   // قرب أعلى القائمة فقط: تحديث خفيف من الخادم (لا يغيّر الموضع لأننا أصلاً في الأعلى)
@@ -964,6 +970,10 @@ async function refreshChat(scrollToEnd){
     // حالة النافذة من بيانات المحادثة
     const convData = await api('/conversations/'+currentConv.id);
     currentConv = {...currentConv, ...convData};
+    // تحديث اسم/رقم العميل في الأعلى (مهم عند استعادة محادثة بعد إعادة فتح التطبيق)
+    const snd = (currentConv.meta && currentConv.meta.sender) || {};
+    if(snd.name) $('chatName').textContent = snd.name;
+    $('chatPhone').textContent = snd.phone_number || '';
     const canReply = convData.can_reply !== false;
     $('windowBanner').style.display = canReply ? 'none' : 'block';
     $('tplBtn').style.display = canReply ? 'none' : 'flex';
@@ -1114,6 +1124,12 @@ $('attachBtn').onclick = ()=>{
 };
 $('attachMedia').onclick = ()=>{ closeSheets(); $('fileInput').click(); };
 $('attachDoc').onclick   = ()=>{ closeSheets(); $('fileInputDoc').click(); };
+/* زر الكاميرا: يفتح كاميرا الهاتف مباشرة لالتقاط صورة وإرسالها */
+$('camBtn').onclick = ()=>{
+  if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال صورة، فقط قالب 📋'); return; }
+  $('camInput').click();
+};
+$('camInput').addEventListener('change', ()=>onFilesChosen($('camInput')));
 /* حدود واتساب Cloud API لكل نوع (لا يمكن تجاوزها — حدود Meta نفسها) */
 const WA_LIMITS_MB = { image: 5, video: 16, audio: 16, other: 100 };
 const WA_TYPE_AR  = { image: 'الصورة', video: 'الفيديو', audio: 'الملف الصوتي', other: 'المستند' };

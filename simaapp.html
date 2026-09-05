@@ -379,7 +379,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-a';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-b';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -1142,6 +1142,23 @@ function waCategory(f){
 }
 $('fileInput').addEventListener('change', ()=>onFilesChosen($('fileInput')));
 $('fileInputDoc').addEventListener('change', ()=>onFilesChosen($('fileInputDoc')));
+/* تصحيح اتجاه الصورة (EXIF) — صور الكاميرا تصل مقلوبة لأن الرفع الخام يتجاهل معلومة الدوران */
+async function fixImageOrientation(file){
+  if(!file || !(file.type||'').startsWith('image/')) return file;
+  try{
+    let bmp;
+    try{ bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch(_){ bmp = await createImageBitmap(file); }   // متصفح قديم: نُبقي الأصل كما هو
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width; canvas.height = bmp.height;
+    canvas.getContext('2d').drawImage(bmp, 0, 0);
+    if(bmp.close) bmp.close();
+    const blob = await new Promise(res=>canvas.toBlob(res, 'image/jpeg', 0.92));
+    if(!blob) return file;
+    const base = (file.name||'photo').replace(/\.[^.]+$/, '');
+    return new File([blob], base + '.jpg', { type: 'image/jpeg' });
+  }catch(e){ return file; }   // أي خطأ: نرسل الأصل بدل تعطيل الإرسال
+}
 async function onFilesChosen(inp){
   const files = Array.from(inp.files || []);
   if(!files.length || !currentConv) return;
@@ -1168,8 +1185,9 @@ async function onFilesChosen(inp){
           toast('انقطع الرفع — إعادة محاولة '+label+' ('+attempt+' من 3)…');
           await new Promise(r=>setTimeout(r, 1500*attempt));   // مهلة متزايدة قبل كل إعادة
         }
+        const fileToSend = await fixImageOrientation(files[i]);   // تصحيح الاتجاه للصور
         const fd = new FormData();
-        fd.append('attachments[]', files[i]);
+        fd.append('attachments[]', fileToSend);
         fd.append('message_type','outgoing');
         if(replyTo && i===0) fd.append('content_attributes[in_reply_to]', replyTo.id);   // الاقتباس على الأول فقط
         if(cap && i===0) fd.append('content', cap);                                       // النص المكتوب مع الأول فقط

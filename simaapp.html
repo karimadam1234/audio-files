@@ -142,8 +142,9 @@
 
   /* ===== إدخال ===== */
   .composer{display:flex;align-items:flex-end;gap:8px;padding:8px 10px;background:transparent;flex-shrink:0}
-  .composer-box{flex:1;background:#fff;border-radius:24px;display:flex;align-items:flex-end;padding:6px 8px 6px 12px;gap:6px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
-  .composer textarea{flex:1;border:none;resize:none;font-size:15px;font-family:inherit;max-height:110px;line-height:1.5;padding:6px 4px;background:transparent}
+  .composer-box{flex:1;min-width:0;background:#fff;border-radius:24px;display:flex;align-items:flex-end;padding:6px 8px 6px 12px;gap:6px;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+  .composer textarea{flex:1;min-width:0;border:none;resize:none;font-size:15px;font-family:inherit;max-height:110px;line-height:1.5;padding:6px 4px;background:transparent}
+  .note-toggle{flex-shrink:0}
   .composer textarea:focus{outline:none}
   .send-btn{width:46px;height:46px;border-radius:50%;background:var(--wa-green-dark);color:#fff;border:none;font-size:19px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
   .send-btn:disabled{opacity:.5}
@@ -379,7 +380,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-b';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-d';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -1142,7 +1143,8 @@ function waCategory(f){
 }
 $('fileInput').addEventListener('change', ()=>onFilesChosen($('fileInput')));
 $('fileInputDoc').addEventListener('change', ()=>onFilesChosen($('fileInputDoc')));
-/* تصحيح اتجاه الصورة (EXIF) — صور الكاميرا تصل مقلوبة لأن الرفع الخام يتجاهل معلومة الدوران */
+/* تصحيح اتجاه الصورة (EXIF) — صور الكاميرا تصل مقلوبة لأن الرفع الخام يتجاهل معلومة الدوران.
+   النسخة المثبتة والعاملة (v25-09-b): createImageBitmap بـ from-image يبيّت الاتجاه ثم canvas→JPEG. */
 async function fixImageOrientation(file){
   if(!file || !(file.type||'').startsWith('image/')) return file;
   try{

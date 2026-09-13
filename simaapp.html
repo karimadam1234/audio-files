@@ -298,6 +298,7 @@
     <h3>ماذا تريدين إرساله؟</h3>
     <div class="row" id="attachMedia"><div class="ic">🖼</div> صورة أو فيديو</div>
     <div class="row" id="attachDoc"><div class="ic">📄</div> ملف PDF أو مستند</div>
+    <div class="row" id="attachLink"><div class="ic">📍</div> موقع المحل (خريطة Google Maps)</div>
   </div>
 
   <div class="sheet" id="filterLabelSheet">
@@ -359,6 +360,8 @@ bitsperframe:             %d
              الرسم الدورية تدمّر المشغّل أثناء التشغيل)
          (9) علامات الحالة الحقيقية: ✓ أُرسلت | ✓✓ وصلت | ✓✓ زرقاء قُرئت
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
+   v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
+              (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً (من الخادم مباشرة، بلا زر الإغلاق السريع)
    v1.6: (10) الروابط في الرسائل قابلة للنقر (تُفتح في تبويب/متصفح خارجي)
               مع بقاء الحماية من حقن HTML
    ========================================================= */
@@ -380,7 +383,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-d';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-e';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -503,14 +506,9 @@ function applyRoleUI(){
   const allTab = document.querySelector('.tab[data-tab="all"]');
   allTab.style.display = isAdmin ? '' : 'none';
   $('inboxBar').style.display = isAdmin ? '' : 'none';   // شريط الصناديق/الفرز للمدير فقط
-  // تبويب المراجعة «ينتظر رداً» للمدير وحده — والموظفة تبقى على «غير مقروءة»
-  document.querySelector('.f-chip[data-f="waiting"]').style.display = isAdmin ? '' : 'none';
+  // تبويب «ينتظر رداً» يظهر للمدير والموظفة معاً (للموظفة: كل محادثاتها التي آخر رسالة فيها من العميل)
+  document.querySelector('.f-chip[data-f="waiting"]').style.display = '';
   document.querySelector('.f-chip[data-f="unread"]').style.display = '';   // للمدير «بانتظار الرد» وللموظفة «غير مقروءة»
-  if(!isAdmin && currentFilter === 'waiting'){
-    currentFilter = 'all';
-    document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
-    document.querySelector('.f-chip[data-f="all"]').classList.add('active');
-  }
   if(!isAdmin){
     currentSort = 'latest';   // الموظفة: الأحدث نشاطاً أولاً — الرسالة الجديدة تصعد للأعلى كواتساب
     currentTab = 'me';
@@ -671,14 +669,15 @@ const WAIT_LIST_API = 'https://n8n.srv1697902.hstgr.cloud/webhook/sima-waiting-l
 function adminListMode(){
   const isAdmin = ME?.role === 'administrator';
   if(isAdmin) return currentFilter === 'waiting' || currentFilter === 'unread';
-  return currentFilter === 'unread';   // الموظفة: «غير مقروءة» أيضاً من الخادم مباشرة (بدل تصفح مئات الصفحات)
+  return currentFilter === 'unread' || currentFilter === 'waiting';   // الموظفة: «غير مقروءة» و«ينتظر رداً» من الخادم مباشرة (بدل تصفح مئات الصفحات)
 }
 async function loadWaitingList(){
   const seq = viewSeq;
   const isAdmin = ME?.role === 'administrator';
   const agent = agentView ? String(agentView) : (currentTab === 'me' || !isAdmin) ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
   // المدير: unread = ينتظر وغير مقروء / read = ينتظر وقُرئ — الموظفة: unseen = كل ما فيه رسائل واردة لم تُقرأ (معيار Chatwoot نفسه)
-  const kind = !isAdmin ? 'unseen' : currentFilter === 'unread' ? 'unread' : 'read';
+  // الموظفة: unseen = غير مقروءة / any = كل ما ينتظر ردها (آخر رسالة من العميل)
+  const kind = !isAdmin ? (currentFilter === 'waiting' ? 'any' : 'unseen') : currentFilter === 'unread' ? 'unread' : 'read';
   $('convList').innerHTML = '<div class="spin"></div>';
   try{
     const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=' + kind + '&t=' + Date.now(), { cache: 'no-store' });
@@ -757,7 +756,7 @@ function updateFilterCounts(){
   }
   // توزيع التبويبات حسب الدور:
   // المدير  → «ينتظر رداً» (للمراجعة وفهم سبب عدم الرد)، ولا «غير مقروءة» لأن فتحه للمحادثة يُعلّمها مقروءة.
-  // الموظفة → «غير مقروءة» فقط كما اعتادت — بلا «ينتظر رداً» وبلا زر الإغلاق السريع.
+  // الموظفة → «غير مقروءة» + «ينتظر رداً» (كل ما ينتظر ردها) — بلا زر الإغلاق السريع ✓.
   const setChip = (f, show) => {
     const chip = document.querySelector('.f-chip[data-f="'+f+'"]');
     if(!chip) return;
@@ -768,7 +767,7 @@ function updateFilterCounts(){
       document.querySelector('.f-chip[data-f="all"]').classList.add('active');
     }
   };
-  setChip('waiting', isAdmin);
+  setChip('waiting', true);   // للمدير والموظفة
   setChip('unread', true);   // للمدير «بانتظار الرد»، وللموظفة «غير مقروءة»
 }
 /* البحث نشط؟ (نص ≥ حرفين في خانة البحث) — أثناءه لا يُسمح لأي مسار بإعادة رسم القائمة */
@@ -1125,6 +1124,19 @@ $('attachBtn').onclick = ()=>{
 };
 $('attachMedia').onclick = ()=>{ closeSheets(); $('fileInput').click(); };
 $('attachDoc').onclick   = ()=>{ closeSheets(); $('fileInputDoc').click(); };
+/* موقع المحل (Google Maps): يوضع الرابط في خانة الكتابة (مع أي نص مكتوب) ثم تضغط الموظفة إرسال —
+   يظهر عند العميل كرابط بمعاينة، وبالضغط تُفتح الخريطة. الإحداثيات: 35.739629, -5.792639 (طنجة) */
+const MAPS_URL = 'https://maps.app.goo.gl/cQQvQ2BNH8PbsfWo9';
+$('attachLink').onclick = ()=>{
+  closeSheets();
+  const cur = inputEl.value.trim();
+  if(cur.includes(MAPS_URL)){ toast('رابط الموقع موجود في الرسالة'); inputEl.focus(); return; }
+  const txt = '📍 موقع المحل:\n' + MAPS_URL;
+  inputEl.value = cur ? cur + '\n' + txt : txt;
+  inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,110)+'px';
+  inputEl.focus();
+  toast('أُضيف موقع المحل — اضغطي إرسال ◀');
+};
 /* زر الكاميرا: يفتح كاميرا الهاتف مباشرة لالتقاط صورة وإرسالها */
 $('camBtn').onclick = ()=>{
   if(currentConv?.can_reply === false){ toast('النافذة مغلقة — لا يمكن إرسال صورة، فقط قالب 📋'); return; }

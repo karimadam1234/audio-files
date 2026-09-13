@@ -361,7 +361,7 @@ bitsperframe:             %d
          (9) علامات الحالة الحقيقية: ✓ أُرسلت | ✓✓ وصلت | ✓✓ زرقاء قُرئت
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
-              (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً (من الخادم مباشرة، بلا زر الإغلاق السريع)
+              (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
    v1.6: (10) الروابط في الرسائل قابلة للنقر (تُفتح في تبويب/متصفح خارجي)
               مع بقاء الحماية من حقن HTML
    ========================================================= */
@@ -383,7 +383,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-e';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-f';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -676,8 +676,8 @@ async function loadWaitingList(){
   const isAdmin = ME?.role === 'administrator';
   const agent = agentView ? String(agentView) : (currentTab === 'me' || !isAdmin) ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
   // المدير: unread = ينتظر وغير مقروء / read = ينتظر وقُرئ — الموظفة: unseen = كل ما فيه رسائل واردة لم تُقرأ (معيار Chatwoot نفسه)
-  // الموظفة: unseen = غير مقروءة / any = كل ما ينتظر ردها (آخر رسالة من العميل)
-  const kind = !isAdmin ? (currentFilter === 'waiting' ? 'any' : 'unseen') : currentFilter === 'unread' ? 'unread' : 'read';
+  // الموظفة (كالمدير، بلا تداخل): «غير مقروءة» = unseen (عليها إشعار) / «ينتظر رداً» = read (قُرئت ولم يُرد عليها)
+  const kind = !isAdmin ? (currentFilter === 'waiting' ? 'read' : 'unseen') : currentFilter === 'unread' ? 'unread' : 'read';
   $('convList').innerHTML = '<div class="spin"></div>';
   try{
     const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=' + kind + '&t=' + Date.now(), { cache: 'no-store' });
@@ -751,8 +751,9 @@ function updateFilterCounts(){
     const unShown = (adminListMode() && !convHasMore) ? unLocal : (unSrv !== null ? unSrv : unLocal);
     $('fCntUnread').textContent = unShown ? ' ('+unShown+((unSrv === null && convHasMore) ? plus : '')+')' : '';
     $('fLblUnread').textContent = 'غير مقروءة';
-    const wait = allSrv !== null ? allSrv : conversations.filter(isWaiting).length;
-    $('fCntWait').textContent = wait ? ' ('+wait+(allSrv === null ? plus : '')+')' : '';
+    // «ينتظر رداً» للموظفة = ينتظر وقُرئ بلا رد (كالمدير — حتى لا يتداخل مع «غير مقروءة»)
+    const wr2 = (allSrv !== null && unSrv !== null) ? Math.max(0, allSrv - unSrv) : conversations.filter(isWaitingRead).length;
+    $('fCntWait').textContent = wr2 ? ' ('+wr2+((allSrv === null || unSrv === null) ? plus : '')+')' : '';
   }
   // توزيع التبويبات حسب الدور:
   // المدير  → «ينتظر رداً» (للمراجعة وفهم سبب عدم الرد)، ولا «غير مقروءة» لأن فتحه للمحادثة يُعلّمها مقروءة.
@@ -782,7 +783,7 @@ function renderList(append=false){
   const awaits = isWaiting;
   let pool = conversations;
   const adminMode = ME?.role === 'administrator';
-  if(currentFilter==='waiting') pool = pool.filter(adminMode ? isWaitingRead : awaits);
+  if(currentFilter==='waiting') pool = pool.filter(isWaitingRead);   // للدورين: ينتظر وقُرئ بلا رد (المتداخل مع «غير مقروءة» لا يظهر هنا)
   else if(currentFilter==='unread') pool = pool.filter(adminMode ? isWaitingUnread : (c=>(c.unread_count||0)>0));
   else if(currentFilter==='fav') pool = pool.filter(c=>favs.has(c.id));
   else if(currentFilter==='label' && filterLabel) pool = pool.filter(c=>(c.labels||[]).includes(filterLabel));

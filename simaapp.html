@@ -362,6 +362,11 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-g: (13) فلتر الوسوم من الخادم مباشرة (فلتر Chatwoot الرسمي): كل المحادثات بهذا الوسم —
+                   المفتوحة والمغلقة والقديمة — بدل البحث في أول 1000 محادثة مفتوحة فقط
+              (14) المفضلة تُجلب مباشرة بمعرّفاتها (بدل تصفح عشرات الصفحات) — أسرع بكثير
+              (15) تبويبات الخادم (غير مقروءة/ينتظر رداً/الوسم/المفضلة) تتحدث تلقائياً كل 30 ثانية بصمت —
+                   كانت تبقى قديمة فتظهر فيها محادثات قُرئت من جهاز آخر
    v1.6: (10) الروابط في الرسائل قابلة للنقر (تُفتح في تبويب/متصفح خارجي)
               مع بقاء الحماية من حقن HTML
    ========================================================= */
@@ -383,7 +388,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-f';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-g';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -394,6 +399,7 @@ let inboxesList = [];
 let convPage = 1;
 let viewSeq = 0;               // رقم العرض الحالي — يتغيّر مع كل تبديل موظفة/تبويب/فلتر فتُهمل النتائج المتأخرة
 let convReq = 0;               // رقم آخر طلب قائمة — يمنع تعليق التطبيق على طلب قديم بطيء
+let lastSrvPoll = 0;           // آخر تحديث صامت لتبويبات الخادم
 let lastMonitorPoll = 0;       // آخر تحديث دوري في وضع المراقبة (أبطأ من العادي — الطلبات ثقيلة)
 let convHasMore = true;
 let convLoading = false;
@@ -652,6 +658,8 @@ async function fillForFilter(){
 /* إعادة تحميل كاملة تناسب الوضع الحالي: مع فلتر محلي نشط تُجلب كل الصفحات */
 async function reloadForCurrentView(){
   if(adminListMode()){ await loadWaitingList(); return; }   // قائمة الانتظار تأتي جاهزة من الخادم
+  if(currentFilter === 'label' && filterLabel){ await loadLabelList(); return; }
+  if(currentFilter === 'fav'){ await loadFavList(); return; }
   await loadConversations(true, true);   // طلب المستخدم يتجاوز أي طلب بطيء جارٍ
   // وضع المراقبة لا يملأ كل الصفحات: الترتيب من الخادم يضع الأقدم انتظاراً أولاً، والباقي بالتمرير
   if(currentFilter !== 'all') await fillForFilter();
@@ -671,14 +679,61 @@ function adminListMode(){
   if(isAdmin) return currentFilter === 'waiting' || currentFilter === 'unread';
   return currentFilter === 'unread' || currentFilter === 'waiting';   // الموظفة: «غير مقروءة» و«ينتظر رداً» من الخادم مباشرة (بدل تصفح مئات الصفحات)
 }
-async function loadWaitingList(){
+/* كل عرض تأتي قائمته جاهزة (لا من تصفح صفحات «الكل») */
+function serverListMode(){
+  return adminListMode() || currentFilter === 'label' || currentFilter === 'fav';
+}
+/* الوسم: فلتر Chatwoot الرسمي على الخادم — كل المحادثات بهذا الوسم (مفتوحة ومغلقة، قديمة وحديثة) */
+async function loadLabelList(silent){
+  const seq = viewSeq;
+  if(!filterLabel) return;
+  if(!silent) $('convList').innerHTML = '<div class="spin"></div>';
+  const conds = [{ attribute_key: 'labels', filter_operator: 'equal_to', values: [filterLabel], query_operator: null }];
+  const who = agentView ? agentView : (currentTab === 'me' ? ME.id : 0);
+  if(who){ conds[0].query_operator = 'AND'; conds.push({ attribute_key: 'assignee_id', filter_operator: 'equal_to', values: [who], query_operator: null }); }
+  const getPage = p => api('/conversations/filter?page='+p, { method: 'POST', body: JSON.stringify({ payload: conds }) });
+  try{
+    const out = [], seen = new Set();
+    let page = 1, more = true;
+    while(more && page <= 40){
+      const pages = [page, page+1, page+2, page+3]; page += 4;
+      const res = await Promise.all(pages.map(pg => getPage(pg)));
+      if(seq !== viewSeq || currentFilter !== 'label') return;
+      for(const d of res){
+        const list = d?.data?.payload || d?.payload || [];
+        for(const c of list){ if(!seen.has(c.id)){ seen.add(c.id); out.push(c); } }
+        if(list.length < 25){ more = false; }
+      }
+    }
+    if(currentTab === 'unassigned' && !agentView) { for(let i = out.length-1; i >= 0; i--) if(out[i].meta?.assignee) out.splice(i,1); }
+    out.sort((a,b)=> (b.last_activity_at||b.timestamp||0) - (a.last_activity_at||a.timestamp||0));
+    conversations = out; convHasMore = false;
+    renderList();
+  }catch(e){
+    if(silent || seq !== viewSeq) return;
+    await loadConversations(true, true); await fillForFilter();   // احتياط: الطريقة القديمة
+  }
+}
+/* المفضلة: جلب كل محادثة مفضلة بمعرّفها مباشرة (بدل تصفح عشرات الصفحات) */
+async function loadFavList(silent){
+  const seq = viewSeq;
+  if(!silent) $('convList').innerHTML = '<div class="spin"></div>';
+  const ids = [...favs].slice(-80);
+  const res = await Promise.all(ids.map(id => api('/conversations/'+id).catch(()=>null)));
+  if(seq !== viewSeq || currentFilter !== 'fav') return;
+  conversations = res.filter(c => c && c.id)
+    .sort((a,b)=> (b.last_activity_at||b.timestamp||0) - (a.last_activity_at||a.timestamp||0));
+  convHasMore = false;
+  renderList();
+}
+async function loadWaitingList(silent){
   const seq = viewSeq;
   const isAdmin = ME?.role === 'administrator';
   const agent = agentView ? String(agentView) : (currentTab === 'me' || !isAdmin) ? String(ME.id) : currentTab === 'unassigned' ? 'none' : 'all';
   // المدير: unread = ينتظر وغير مقروء / read = ينتظر وقُرئ — الموظفة: unseen = كل ما فيه رسائل واردة لم تُقرأ (معيار Chatwoot نفسه)
   // الموظفة (كالمدير، بلا تداخل): «غير مقروءة» = unseen (عليها إشعار) / «ينتظر رداً» = read (قُرئت ولم يُرد عليها)
   const kind = !isAdmin ? (currentFilter === 'waiting' ? 'read' : 'unseen') : currentFilter === 'unread' ? 'unread' : 'read';
-  $('convList').innerHTML = '<div class="spin"></div>';
+  if(!silent) $('convList').innerHTML = '<div class="spin"></div>';
   try{
     const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=' + kind + '&t=' + Date.now(), { cache: 'no-store' });
     if(!r.ok) throw 0;
@@ -694,7 +749,7 @@ async function loadWaitingList(){
     renderList();
     refreshWaitStats(true);
   }catch(e){
-    if(seq !== viewSeq) return;
+    if(silent || seq !== viewSeq) return;   // التحديث الصامت: عند التعذّر تبقى القائمة الحالية كما هي
     await loadConversations(true, true);   // احتياط: الطريقة القديمة (تصفح الصفحات)
     await fillForFilter();
   }
@@ -810,7 +865,7 @@ function renderList(append=false){
     const waiting = awaits(c);
     return '<div class="conv'+(waiting?' waiting':'')+'" data-id="'+c.id+'">'
       + '<div class="avatar" style="background:'+avatarColor(name)+'">'+esc(initials(name))+'</div>'
-      + '<div class="conv-mid"><div class="conv-name">'+(pins.has(c.id)?'📌 ':'')+esc(name)+(waiting?' <span class="wait-tag">بانتظار الرد</span>':'')+'</div>'
+      + '<div class="conv-mid"><div class="conv-name">'+(pins.has(c.id)?'📌 ':'')+esc(name)+(waiting?' <span class="wait-tag">بانتظار الرد</span>':'')+(c.status==='resolved'?' <span class="wait-tag" style="background:#EEE;color:#555">مُغلقة</span>':'')+'</div>'
       + '<div class="conv-last">'+esc(last).slice(0,70)+'</div>'
       + (chips?'<div class="chips">'+chips+'</div>':'')
       + '</div>'
@@ -863,27 +918,28 @@ document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{
       closeSheets();
       const t = r.dataset.lt;
       const chip = document.querySelector('.f-chip[data-f="label"]');
-      if(!t){ filterLabel=null; chip.textContent='🏷 الوسوم'; currentFilter='all';
+      if(!t){ const wasSrv = serverListMode(); filterLabel=null; chip.textContent='🏷 الوسوم'; currentFilter='all'; viewSeq++;
         document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
         document.querySelector('.f-chip[data-f="all"]').classList.add('active');
-        if(!convHasMore && conversations.length < 30){ reloadForCurrentView(); return; }
+        if(wasSrv){ $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView(); return; }
         renderList(); return; }
       filterLabel = t; chip.textContent = '🏷 '+t;
-      currentFilter = 'label';
+      currentFilter = 'label'; viewSeq++;
       document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
       chip.classList.add('active');
-      renderList(); fillForFilter();
+      loadLabelList();   // من الخادم مباشرة — كل المحادثات بهذا الوسم
     });
     openSheet('filterLabelSheet');
     return;
   }
   filterLabel=null; document.querySelector('.f-chip[data-f="label"]').textContent='🏷 الوسوم';
-  const wasServerList = adminListMode() && !convHasMore;   // كنا في تبويب محمّل من الخادم (قائمة جزئية)
+  const wasServerList = serverListMode() && !convHasMore;   // كنا في تبويب محمّل من الخادم (قائمة جزئية)
   currentFilter = f; viewSeq++;
   document.querySelectorAll('.f-chip').forEach(x=>x.classList.remove('active'));
   ch.classList.add('active');
   if(f==='waiting' || f==='unread') refreshWaitStats(true);   // رقم محدّث فوراً عند فتح التبويب
   if(adminListMode()){ loadWaitingList(); return; }   // القائمة جاهزة من الخادم
+  if(f==='fav'){ loadFavList(); return; }             // المفضلة بمعرّفاتها مباشرة
   if(wasServerList){ $('convList').innerHTML='<div class="spin"></div>'; reloadForCurrentView(); return; }   // عودة إلى القائمة الكاملة
   renderList();
   if(f!=='all') fillForFilter();   // اجلب بقية الصفحات تلقائياً لاكتمال نتائج الفلتر
@@ -892,6 +948,16 @@ function startListPolling(){
   clearInterval(listTimer);
   loadConversations(true);
   listTimer = setInterval(()=>{
+    // تبويبات الخادم (غير مقروءة/ينتظر رداً/وسم/مفضلة): تحديث صامت كل 30 ثانية — حتى لا تبقى فيها محادثات قُرئت
+    if(serverListMode()){
+      if(!$('listScreen').classList.contains('active') || $('convList').scrollTop >= 120 || searchActive()) return;
+      if(Date.now() - lastSrvPoll < 30000) return;
+      lastSrvPoll = Date.now();
+      if(adminListMode()) loadWaitingList(true);
+      else if(currentFilter === 'label') loadLabelList(true);
+      else loadFavList(true);
+      return;
+    }
     // التحديث الدوري في وضع «الكل» فقط — الفلاتر المحلية تبقى ثابتة حتى لا تتقلب القائمة
     // ولا تحديث أثناء التمرير العميق أو البحث النشط
     // ولا تحديث والقائمة مخفية (داخل محادثة) — كانت تُقرأ scrollTop=0 خطأً فتعيد التحميل وتفقد الموضع

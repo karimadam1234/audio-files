@@ -298,6 +298,7 @@
     <h3>ماذا تريدين إرساله؟</h3>
     <div class="row" id="attachMedia"><div class="ic">🖼</div> صورة أو فيديو</div>
     <div class="row" id="attachDoc"><div class="ic">📄</div> ملف PDF أو مستند</div>
+    <div class="row" id="attachCatalog"><div class="ic">🛍️</div> كتالوج المنتجات (يُفتح داخل واتساب)</div>
     <div class="row" id="attachLink"><div class="ic">📍</div> موقع المحل (خريطة Google Maps)</div>
   </div>
 
@@ -362,6 +363,7 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-i: (17) زر «🛍️ كتالوج واتساب» في ورقة الإرفاق 📎 يضع رابط الكتالوج (wa.me/c) — يفتح الكتالوج داخل واتساب مباشرة
    v25-09-h: (16) تبويب «غير معيّن» يختفي ما دام فارغاً (كل المحادثات تُسند تلقائياً) ويعود وحده متى وُجدت محادثة غير مسندة
    v25-09-g: (13) فلتر الوسوم من الخادم مباشرة (فلتر Chatwoot الرسمي): كل المحادثات بهذا الوسم —
                    المفتوحة والمغلقة والقديمة — بدل البحث في أول 1000 محادثة مفتوحة فقط
@@ -389,7 +391,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-h';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-i';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -1198,6 +1200,18 @@ $('attachDoc').onclick   = ()=>{ closeSheets(); $('fileInputDoc').click(); };
 /* موقع المحل (Google Maps): يوضع الرابط في خانة الكتابة (مع أي نص مكتوب) ثم تضغط الموظفة إرسال —
    يظهر عند العميل كرابط بمعاينة، وبالضغط تُفتح الخريطة. الإحداثيات: 35.739629, -5.792639 (طنجة) */
 const MAPS_URL = 'https://maps.app.goo.gl/cQQvQ2BNH8PbsfWo9';
+/* كتالوج واتساب: رابط wa.me/c يفتح كتالوج الرقم داخل واتساب (يتحدث تلقائياً من المتجر كل ساعة) */
+const CATALOG_URL = 'https://wa.me/c/212646297556';
+$('attachCatalog').onclick = ()=>{
+  closeSheets();
+  const cur = inputEl.value.trim();
+  if(cur.includes(CATALOG_URL)){ toast('رابط الكتالوج موجود في الرسالة'); inputEl.focus(); return; }
+  const txt = '🛍️ هادا الكتالوج ديالنا، فيه جميع الموديلات والألوان والأثمنة. غير ضغطي على الرابط:\n' + CATALOG_URL;
+  inputEl.value = cur ? cur + '\n' + txt : txt;
+  inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,110)+'px';
+  inputEl.focus();
+  toast('أُضيف رابط الكتالوج — اضغطي إرسال ◀');
+};
 $('attachLink').onclick = ()=>{
   closeSheets();
   const cur = inputEl.value.trim();

@@ -212,7 +212,7 @@
     <div class="tabs">
       <div class="tab active" data-tab="all">الكل <span class="cnt" id="cntAll">0</span></div>
       <div class="tab" data-tab="me">محادثاتي <span class="cnt" id="cntMe">0</span></div>
-      <div class="tab" data-tab="unassigned">غير معيّن <span class="cnt" id="cntUn">0</span></div>
+      <div class="tab" data-tab="unassigned" style="display:none">غير معيّن <span class="cnt" id="cntUn">0</span></div>
     </div>
     <div class="inbox-bar" id="inboxBar"></div>
     <div class="filter-bar" id="filterBar">
@@ -362,6 +362,7 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-h: (16) تبويب «غير معيّن» يختفي ما دام فارغاً (كل المحادثات تُسند تلقائياً) ويعود وحده متى وُجدت محادثة غير مسندة
    v25-09-g: (13) فلتر الوسوم من الخادم مباشرة (فلتر Chatwoot الرسمي): كل المحادثات بهذا الوسم —
                    المفتوحة والمغلقة والقديمة — بدل البحث في أول 1000 محادثة مفتوحة فقط
               (14) المفضلة تُجلب مباشرة بمعرّفاتها (بدل تصفح عشرات الصفحات) — أسرع بكثير
@@ -388,7 +389,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-g';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-h';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -602,6 +603,9 @@ async function loadConversations(reset=true, force=false){
       $('cntAll').textContent = meta.all_count ?? '';
       $('cntMe').textContent = meta.mine_count ?? '';
       $('cntUn').textContent = meta.unassigned_count ?? '';
+      // «غير معيّن» يظهر فقط إن وُجدت محادثات غير مسندة (أو كان هو التبويب المفتوح)
+      const unN = Number(meta.unassigned_count || 0);
+      document.querySelector('.tab[data-tab="unassigned"]').style.display = (unN > 0 || currentTab === 'unassigned') ? '' : 'none';
     }
     renderList(!reset);
     refreshWaitStats();

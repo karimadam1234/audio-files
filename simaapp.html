@@ -363,6 +363,7 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-j: (18) سطر آخر رسالة في القائمة: إن كانت آخر رسالة رداً آلياً (ترحيب/كتالوج/توصلنا بسؤالك/شكرا على تقديم طلبك) يُعرض بدلها آخر ما كتبه العميل
    v25-09-i: (17) زر «🛍️ كتالوج واتساب» في ورقة الإرفاق 📎 يضع رابط الكتالوج (wa.me/c) — يفتح الكتالوج داخل واتساب مباشرة
    v25-09-h: (16) تبويب «غير معيّن» يختفي ما دام فارغاً (كل المحادثات تُسند تلقائياً) ويعود وحده متى وُجدت محادثة غير مسندة
    v25-09-g: (13) فلتر الوسوم من الخادم مباشرة (فلتر Chatwoot الرسمي): كل المحادثات بهذا الوسم —
@@ -391,7 +392,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-i';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-j';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -403,6 +404,8 @@ let convPage = 1;
 let viewSeq = 0;               // رقم العرض الحالي — يتغيّر مع كل تبديل موظفة/تبويب/فلتر فتُهمل النتائج المتأخرة
 let convReq = 0;               // رقم آخر طلب قائمة — يمنع تعليق التطبيق على طلب قديم بطيء
 let lastSrvPoll = 0;           // آخر تحديث صامت لتبويبات الخادم
+const AUTO_PREFIXES = ['مرحبا بك في Sima confection', 'يمكنك تصفح كتالوج منتجاتنا', 'اذا واجهتك مشكلة في فتح المتجر', 'توصلنا بطلبك', 'توصلنا بسؤالك', 'شكرا على تقديم طلبك'];
+let realLast = new Map(), realLastAt = 0, realLastBusy = false, realLoaded = false;
 let lastMonitorPoll = 0;       // آخر تحديث دوري في وضع المراقبة (أبطأ من العادي — الطلبات ثقيلة)
 let convHasMore = true;
 let convLoading = false;
@@ -857,11 +860,13 @@ function renderList(append=false){
     : pool.filter(awaits).concat(pool.filter(c=>!awaits(c)));
   // المثبتة تتصدر كل شيء (خارج وضع المراقبة)
   const finalList = agentView ? sorted : sorted.filter(c=>pins.has(c.id)).concat(sorted.filter(c=>!pins.has(c.id)));
+  let needReal = false;
   el.innerHTML = finalList.map(c=>{
     const s = c.meta?.sender || {};
     const name = s.name || s.phone_number || 'بدون اسم';
     const lm = c.last_non_activity_message;
-    const last = lm?.content || (lm?.attachments?.length ? '📎 مرفق (صورة/ملف)' : '…');
+    let last = lm?.content || (lm?.attachments?.length ? '📎 مرفق (صورة/ملف)' : '…');
+    if(isAutoReply(lm)){ const rl = realLast.get(c.id); last = rl ? rl : (realLoaded ? '👋 تحية — وصلها الترحيب الآلي' : last); if(!rl) needReal = true; }
     const ts = c.timestamp || c.last_activity_at || lm?.created_at || c.created_at;
     const unread = c.unread_count || 0;
     const chips = (c.labels||[]).map(l=>{
@@ -910,6 +915,36 @@ function renderList(append=false){
     if(currentFilter==='fav') renderList(append);
   });
   if(append) el.scrollTop = keepScroll;
+  if(needReal) refreshRealLast();
+}
+/* سطر آخر رسالة: الردود الآلية للموجّه (sender_id=2) لا تُعرض كآخر رسالة —
+   يُعرض بدلها آخر ما كتبه العميل، من واجهة قائمة الانتظار (kind=any) التي تتجاهل الردود الآلية أصلاً. */
+function isAutoReply(lm){
+  if(!lm || Number(lm.message_type) !== 1) return false;
+  const t = String(lm.content || '').trim();
+  return AUTO_PREFIXES.some(p => t.startsWith(p));
+}
+async function refreshRealLast(){
+  if(realLastBusy || Date.now() - realLastAt < 30000 || !ME) return;
+  realLastBusy = true;
+  realLastAt = Date.now();
+  try{
+    const isAdmin = ME.role === 'administrator';
+    const agent = agentView ? String(agentView) : !isAdmin ? String(ME.id) : 'all';
+    const r = await fetch(WAIT_LIST_API + '?agent=' + agent + '&kind=any&t=' + Date.now(), { cache: 'no-store' });
+    if(!r.ok) throw 0;
+    const rows = await r.json();
+    const m = new Map();
+    (rows || []).forEach(x => m.set(Number(x.id), x.content || (x.has_att ? '📎 مرفق (صورة/ملف)' : '')));
+    realLast = m;
+    realLoaded = true;
+    realLastBusy = false;
+    renderList(true);
+  }catch(e){
+    // عند التعذّر: يبقى النص الأصلي، ولا نعيد المحاولة قبل 30 ثانية
+  }finally{
+    realLastBusy = false;
+  }
 }
 /* شريط الفلاتر (خاص بنطاق الموظفة الحالي فقط) */
 document.querySelectorAll('.f-chip').forEach(ch=> ch.onclick = ()=>{

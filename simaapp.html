@@ -363,6 +363,7 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-k: (19) الأوقات والتواريخ تُعرض بتوقيت المغرب (غرينتش GMT) مهما كان توقيت الجهاز — المغرب رجع لـGMT في 20/09/2026 وأجهزة كثيرة ما زالت تعرض +1
    v25-09-j: (18) سطر آخر رسالة في القائمة: إن كانت آخر رسالة رداً آلياً (ترحيب/كتالوج/توصلنا بسؤالك/شكرا على تقديم طلبك) يُعرض بدلها آخر ما كتبه العميل
    v25-09-i: (17) زر «🛍️ كتالوج واتساب» في ورقة الإرفاق 📎 يضع رابط الكتالوج (wa.me/c) — يفتح الكتالوج داخل واتساب مباشرة
    v25-09-h: (16) تبويب «غير معيّن» يختفي ما دام فارغاً (كل المحادثات تُسند تلقائياً) ويعود وحده متى وُجدت محادثة غير مسندة
@@ -392,7 +393,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-j';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-k';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -426,18 +427,21 @@ const $ = id => document.getElementById(id);
 document.addEventListener('DOMContentLoaded', ()=>{ const v = document.getElementById('appVer'); if(v) v.textContent = APP_VER; });
 const esc = s => (s??'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
-function fmtTime(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleTimeString('ar-MA',{hour:'2-digit',minute:'2-digit'}); }
+/* توقيت المغرب = غرينتش (GMT) منذ 20/09/2026. نثبّته هنا بدل الاعتماد على ساعة الجهاز، لأن أجهزة كثيرة لم تُحدَّث بعد وتعرض +1 */
+const SIMA_TZ = 'UTC';
+const dayKey = d => d.toLocaleDateString('en-CA',{timeZone:SIMA_TZ});
+function fmtTime(ts){ if(!ts) return ''; const d=new Date(ts*1000); return d.toLocaleTimeString('ar-MA',{hour:'2-digit',minute:'2-digit',timeZone:SIMA_TZ}); }
 /* توقيت قائمة المحادثات: اليوم = الساعة، وما قبله = التاريخ */
 function fmtListTime(ts){
   if(!ts) return '';
   const d=new Date(ts*1000), now=new Date();
-  if(d.toDateString()===now.toDateString()) return fmtTime(ts);
-  return d.toLocaleDateString('ar-MA',{day:'2-digit',month:'2-digit',year:'2-digit'});
+  if(dayKey(d)===dayKey(now)) return fmtTime(ts);
+  return d.toLocaleDateString('ar-MA',{day:'2-digit',month:'2-digit',year:'2-digit',timeZone:SIMA_TZ});
 }
-function fmtDay(ts){ const d=new Date(ts*1000), now=new Date(); const dd=(a,b)=>a.toDateString()===b.toDateString();
+function fmtDay(ts){ const d=new Date(ts*1000), now=new Date(); const dd=(a,b)=>dayKey(a)===dayKey(b);
   if(dd(d,now)) return 'اليوم';
-  const y=new Date(now); y.setDate(y.getDate()-1); if(dd(d,y)) return 'أمس';
-  return d.toLocaleDateString('ar-MA',{day:'numeric',month:'long'}); }
+  const y=new Date(now.getTime()-86400000); if(dd(d,y)) return 'أمس';
+  return d.toLocaleDateString('ar-MA',{day:'numeric',month:'long',timeZone:SIMA_TZ}); }
 /* تحويل الروابط في نص (مُهرَّب مسبقاً) إلى روابط قابلة للنقر — دون فتح باب حقن HTML */
 function linkify(escaped){
   return escaped.replace(/(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g, m=>{

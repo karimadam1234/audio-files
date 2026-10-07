@@ -41,6 +41,8 @@
   .topbar .title{font-size:19px;font-weight:600;flex:1}
   .topbar .sub{font-size:12px;opacity:.85}
   .icon-btn{background:none;border:none;color:#fff;font-size:20px;padding:8px;border-radius:50%;cursor:pointer;line-height:1}
+  .icon-btn.order-btn{opacity:.5}
+  .icon-btn.order-btn.on{opacity:1;background:rgba(255,255,255,.28)}
   .icon-btn:active{background:rgba(255,255,255,.15)}
   .back-btn{font-size:22px}
 
@@ -233,6 +235,7 @@
         <div class="title" id="chatName" style="font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
         <div class="sub" id="chatPhone" style="direction:ltr;text-align:right">—</div>
       </div>
+      <button class="icon-btn order-btn" id="orderBtn" title="طلب مؤكد — وضع وسم «طلب-مؤكد»">✅</button>
       <button class="icon-btn" id="callBtn" title="اتصال هاتفي بالعميل">📞</button>
       <button class="icon-btn" id="actionsBtn" title="إجراءات">⋮</button>
     </div>
@@ -363,6 +366,7 @@ bitsperframe:             %d
              | ⚠ فشلت — بدل ✓✓ زرقاء دائمة
    v25-09-e: (11) زر «📍 موقع المحل» في ورقة الإرفاق 📎 يضع رابط خريطة Google Maps في خانة الكتابة
               (12) تبويب «⏳ ينتظر رداً» صار يظهر للموظفة أيضاً — مفصولاً عن «غير مقروءة» كالمدير: غير مقروءة = عليها إشعار، ينتظر رداً = قُرئت ولم يُرد عليها (بلا زر الإغلاق السريع)
+   v25-09-l: (20) زر «✅» في أعلى المحادثة يضع وسم «طلب-مؤكد» بلمسة واحدة (مع تأكيد) — يصبح أخضر إن كان الطلب مؤكداً؛ وعند إزالة «طلب-مؤكد» من الوسوم يُسأل: هل أُلغي الطلب فعلاً؟
    v25-09-k: (19) الأوقات والتواريخ تُعرض بتوقيت المغرب (غرينتش GMT) مهما كان توقيت الجهاز — المغرب رجع لـGMT في 20/09/2026 وأجهزة كثيرة ما زالت تعرض +1
    v25-09-j: (18) سطر آخر رسالة في القائمة: إن كانت آخر رسالة رداً آلياً (ترحيب/كتالوج/توصلنا بسؤالك/شكرا على تقديم طلبك) يُعرض بدلها آخر ما كتبه العميل
    v25-09-i: (17) زر «🛍️ كتالوج واتساب» في ورقة الإرفاق 📎 يضع رابط الكتالوج (wa.me/c) — يفتح الكتالوج داخل واتساب مباشرة
@@ -393,7 +397,7 @@ const store = (()=> {
 
 /* ---------- حالة ---------- */
 let TOKEN = store.get('sima_token') || '';
-const APP_VER = 'v25-09-k';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
+const APP_VER = 'v25-09-l';    // يظهر بجانب الاسم في الأعلى — للتأكد أن النسخة المنشورة هي الأحدث
 let ME = null;                 // {id, name}
 let currentTab = 'all';
 let agentView = 0;             // 0 = عرض المدير الطبيعي — وإلا: معرف الموظفة المراقَبة (يعرض محادثاتها)
@@ -1060,6 +1064,8 @@ async function openConversation(id){
   if(!(history.state && history.state.s==='chat')) history.pushState({s:'chat'}, '');
   store.set('sima_open_conv', String(id));   // تذكّر المحادثة المفتوحة — تُستعاد عند إعادة فتح التطبيق
   show('chatScreen');
+  updateOrderBtn(currentConv.labels || []);
+  syncOrderBtn();
   await refreshChat(true);
   clearInterval(chatTimer);
   chatTimer = setInterval(()=>refreshChat(false), POLL_CHAT_MS);
@@ -1082,6 +1088,7 @@ async function refreshChat(scrollToEnd){
     // حالة النافذة من بيانات المحادثة
     const convData = await api('/conversations/'+currentConv.id);
     currentConv = {...currentConv, ...convData};
+    if(Array.isArray(convData.labels)) updateOrderBtn(convData.labels);   // حالة زر «طلب مؤكد»
     // تحديث اسم/رقم العميل في الأعلى (مهم عند استعادة محادثة بعد إعادة فتح التطبيق)
     const snd = (currentConv.meta && currentConv.meta.sender) || {};
     if(snd.name) $('chatName').textContent = snd.name;
@@ -1792,6 +1799,39 @@ $('actResolve').onclick = async ()=>{
   }catch(e){ toast('تعذّر تغيير الحالة'); }
 };
 
+/* ---------- زر «طلب مؤكد» ---------- */
+const ORDER_TAG = 'طلب-مؤكد';
+function updateOrderBtn(labels){
+  const on = (labels || []).includes(ORDER_TAG);
+  $('orderBtn').classList.toggle('on', on);
+  $('orderBtn').title = on ? 'الطلب مؤكد ✓ (عليه وسم «طلب-مؤكد»)' : 'طلب مؤكد — وضع وسم «طلب-مؤكد»';
+}
+async function fetchConvLabels(id){
+  const d = await api('/conversations/'+id+'/labels');
+  return d.payload || [];
+}
+async function syncOrderBtn(){
+  const id = currentConv && currentConv.id; if(!id) return;
+  try{ const labels = await fetchConvLabels(id);
+    if(currentConv && currentConv.id===id){ currentConv.labels = labels; updateOrderBtn(labels); }
+  }catch(e){}
+}
+$('orderBtn').onclick = async ()=>{
+  if(!currentConv) return;
+  const id = currentConv.id;
+  let labels;
+  try{ labels = await fetchConvLabels(id); }catch(e){ toast('تعذّر قراءة الوسوم'); return; }
+  if(labels.includes(ORDER_TAG)){ updateOrderBtn(labels); toast('الطلب مؤكد مسبقاً ✓'); return; }
+  if(!confirm('تأكيد هذا الطلب؟\nسيُوضع وسم «طلب-مؤكد» على المحادثة.')) return;
+  const next = labels.concat([ORDER_TAG]);
+  try{
+    await api('/conversations/'+id+'/labels',{method:'POST',body:JSON.stringify({labels:next})});
+    if(currentConv && currentConv.id===id){ currentConv.labels = next; updateOrderBtn(next); }
+    const c = conversations.find(x=>x.id===id); if(c) c.labels = next;
+    toast('✅ وُضع وسم «طلب-مؤكد»');
+  }catch(e){ toast('تعذّر وضع الوسم'); }
+};
+
 /* ---------- الوسوم ---------- */
 async function loadLabels(){
   try{ const d = await api('/labels'); allLabels = d.payload || []; }catch(e){}
@@ -1808,9 +1848,13 @@ $('actLabels').onclick = async ()=>{
 };
 $('saveLabelsBtn').onclick = async ()=>{
   const chosen = [...$('labelsList').querySelectorAll('input:checked')].map(i=>i.value);
+  if((currentConv.labels || []).includes(ORDER_TAG) && !chosen.includes(ORDER_TAG)){
+    const ok = confirm('أزلتِ وسم «طلب-مؤكد».\nهل أُلغي الطلب فعلاً؟\n\nإن كان الطلب في الشحن أو سُلّم: اضغطي «إلغاء» — سيبقى «طلب-مؤكد» وأضيفي «في_انتظار_التسليم» أو «تم_تسليم_الطلب».');
+    if(!ok) chosen.push(ORDER_TAG);
+  }
   try{
     await api('/conversations/'+currentConv.id+'/labels',{method:'POST',body:JSON.stringify({labels:chosen})});
-    currentConv.labels = chosen; closeSheets(); toast('حُفظت الوسوم ✓'); loadConversations();
+    currentConv.labels = chosen; updateOrderBtn(chosen); closeSheets(); toast('حُفظت الوسوم ✓'); loadConversations();
   }catch(e){ toast('تعذّر حفظ الوسوم'); }
 };
 
